@@ -13,7 +13,10 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
 
     display(): void {
         this.containerEl.empty();
-        this.containerEl.createEl("h2", { text: "Time Tracker Statistics Settings" });
+
+        new Setting(this.containerEl)
+            .setName("Configuration")
+            .setHeading();
 
         this.plugin.settings.categories.forEach((category: Category, index: number) => {
             new Setting(this.containerEl)
@@ -32,7 +35,7 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     }))
                 .addText(text => text
-                    .setPlaceholder("Target time (HH:mm:ss)")
+                    .setPlaceholder("Target time")
                     .setValue(category.target)
                     .onChange(async (value) => {
                         category.target = value ? value : "00:00:00"
@@ -49,7 +52,7 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
 
         new Setting(this.containerEl)
             .addButton(button => button
-                .setButtonText("Add New Category")
+                .setButtonText("Add new category")
                 .onClick(async () => {
                     this.plugin.settings.categories.push({ name: "", tags: [], target: "00:00:00" });
                     await this.plugin.saveSettings();
@@ -57,7 +60,7 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                 }));
 
         new Setting(this.containerEl)
-            .setName('First Day of Week')
+            .setName('First day of week')
             .setDesc('Set the first day of the week for statistics calculation.')
             .addDropdown(dropdown => {
                 dropdown

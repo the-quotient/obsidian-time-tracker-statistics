@@ -1,4 +1,4 @@
-import { MarkdownRenderChild, Plugin, TFile } from "obsidian";
+import { MarkdownRenderChild, Plugin } from "obsidian";
 import { defaultSettings, TimeTrackerStatisticsSettings } from "./settings";
 import { TimeTrackerStatisticsSettingsTab } from "./settings-tab";
 import { displayStatisticsDay, displayStatisticsMonth } from "./statistics";
@@ -12,27 +12,27 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
 
         this.addSettingTab(new TimeTrackerStatisticsSettingsTab(this.app, this));
 
-        this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-day", (s, e, i) => {
+        this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-day", async (s, e, i) => {
             e.empty();
             const component = new MarkdownRenderChild(e);
 
-            displayStatisticsDay(e, this, i.sourcePath, s);
+            await displayStatisticsDay(e, this, i.sourcePath, s, component);
 
             i.addChild(component);
         });
 
-         this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-month", (s, e, i) => {
+         this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-month", async (s, e, i) => {
             e.empty();
             const component = new MarkdownRenderChild(e);
 
-            displayStatisticsMonth(e, this, i.sourcePath, s);
+            await displayStatisticsMonth(e, this, i.sourcePath, s, component);
 
             i.addChild(component);
         });
 
         this.addCommand({
             id: `insert-stats-day`,
-            name: `Insert Time Tracker Statistics Day`,
+            name: `Insert time tracker statistics day`,
             editorCallback: (e, _) => {
                 e.replaceSelection("```simple-time-tracker-statistics-day\n```\n");
             }
@@ -40,7 +40,7 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
 
         this.addCommand({
             id: `insert-stats-month`,
-            name: `Insert Time Tracker Statistics Month`,
+            name: `Insert time tracker statistics month`,
             editorCallback: (e, _) => {
                 const block = `\`\`\`simple-time-tracker-statistics-month
 deviation = 0
@@ -57,7 +57,7 @@ daysOff = []
     }
 
     async loadSettings(): Promise<void> {
-        this.settings = Object.assign({}, defaultSettings, await this.loadData());
+        this.settings = Object.assign({}, defaultSettings, (await this.loadData()) as TimeTrackerStatisticsSettings);
     }
 
     async saveSettings(): Promise<void> {
