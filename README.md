@@ -1,90 +1,82 @@
-# Obsidian Sample Plugin
+# Obsidian Time Tracker Statistics
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+This is a statistics companion plugin for the **[Super Simple Time Tracker](https://github.com/Ellpeck/ObsidianSimpleTimeTracker)** by [Ellpeck](https://github.com/Ellpeck). 
+It provides native, high-level visualisations for your time tracking data across your entire vault by leveraging the Dataview API.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+---
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## 🚀 Key Features
 
-## First time developing plugins?
+-  Visualises tracked time without the need for custom API scripts or coding.
+-  Identifies the relevant date based on the file's name.
+    - **Daily**: Requires a `YYYY-MM-DD` format (e.g., `2026-02-01.md`).
+    - **Monthly**: Requires a year and month index (e.g., `2026-02.md`).
+- Automatically groups tracked entries into categories based on file tags defined in your settings.
+- You can add a daily target time for a category and the breakdown will show you how much you deviated from it. You can very easily mark weekends, public holidays, vacation days and sick days and the deviation calculation will take this into account.
+- The Daily view displays whether a tracker is currently running anywhere in your vault.
+- Tracks deviation based on custom target times (e.g., `08:00:00`) assigned to specific categories.
 
-Quick starting guide for new plugin devs:
+---
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## 📊 Statistics Views
 
-## Releasing new releases
+### 1. Daily Statistics
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+Provides a summary of all time tracked for a specific calendar day.
+- **Command**: `Insert time tracker statistics day`.
+- **Code Block**: `simple-time-tracker-statistics-day`.
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+**What it includes:**
 
-## Adding your plugin to the community plugin list
+- **Totals Table**: Breakdown of duration, remaining time, and overtime per category based on your set targets.
+- **Entries Breakdown**: A detailed list of every entry, showing the source file and sub-entry hierarchy.
+- **Running Tracker**: Displays a link to any active tracker found in the vault.
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### 2. Monthly Statistics
 
-## How to use
+A comprehensive report grouping entries by week and calculating long-term time balances.
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+- **Command**: `Insert time tracker statistics month`.
+- **Code Block**: `simple-time-tracker-statistics-month`.
 
-## Manually installing the plugin
+---
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+## 📅 Managing Time Off
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+The Monthly view allows you to exclude specific days from your standard work obligations to keep your **Accumulated Deviation** accurate.
 
-## Funding URL
+### Configuration Parameters
 
-You can include funding URLs where people who use your plugin can financially support it.
+Adjust these values directly within the code block:
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+|Parameter|Type|Description|
+|---|---|---|
+|**`deviation`**|`number`|Time (in **milliseconds**) to carry over from a previous month.|
+|**`vacationDays`**|`number[]`|Days of the month to be excluded from work targets (e.g., `[1, 2, 3]`).|
+|**`sickDays`**|`number[]`|Dates marked as sick leave; reduces the work target.|
+|**`daysOff`**|`number[]`|General non-working days or public holidays.|
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
+---
 
-If you have multiple URLs, you can also do:
+## ⚙️ Setting Up Categories
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+To make the statistics meaningful, map your vault's tags to categories in the **Plugin Settings**. The plugin comes pre-configured with two default categories: **Work** (target `08:00:00`) and **Leisure** (target `00:00:00`).
 
-## API Documentation
+1. **Define a Category**: Give it a name.
+2. **Assign Tags**: Add the tags you use to indicate the files associated with the category. By default, **Work** looks for `#work` and **Leisure** looks for `#leisure`.
+3. **Set Targets**: Enter a daily target in `HH:mm:ss` format. If left blank, the target defaults to `00:00:00`.
+4. **Monthly "Work" Tracking**: **Note:** For the Monthly view to calculate deviation, the plugin specifically identifies "Work" by checking for the `#work` tag within a category. Ensure your primary work category includes this tag.
 
-See https://docs.obsidian.md
+---
+
+## 🛠 Prerequisites
+
+- **Simple Time Tracker**: Required for the underlying data and API.
+- **Dataview**: Required for the plugin to scan and aggregate data.
+
+---
+
+## 🗺️ Roadmap
+
+- Automate the carry-over of deviation values between months.
+- Add yearly summaries.
