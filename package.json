@@ -1,7 +1,7 @@
 {
 	"name": "time-tracker-statistics",
 	"version": "1.0.0",
-	"description": "Provides daily and monthly statistics views across your whole vault for the Simple Time Tracker plugin.",
+	"description": "Provides daily and monthly statistics views across your whole vault for the Super Simple Time Tracker by Ellpeck.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

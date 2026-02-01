@@ -3,9 +3,8 @@
 	"name": "Time Tracker Statistics",
 	"version": "1.0.0",
 	"minAppVersion": "1.11.0",
-	"description": "Provides daily and monthly statistics views across your whole vault for the Super Simple Time Tracker by Ellpeck. ",
+	"description": "Provides daily and monthly statistics views across your whole vault for the Super Simple Time Tracker by Ellpeck.",
 	"author": "the-quotient",
 	"authorUrl": "https://github.com/the-quotient",
-	"fundingUrl": "",
 	"isDesktopOnly": false
 }
