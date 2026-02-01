@@ -27,12 +27,17 @@ Provides a summary of all time tracked for a specific calendar day.
 - **Entries Breakdown**: A detailed list of every entry, showing the source file and sub-entry hierarchy.
 - **Running Tracker**: Displays a link to any active tracker found in the vault.
 
+<img width="774" height="670" alt="image" src="https://github.com/user-attachments/assets/3d78b2a8-9c71-4db9-a0ae-475aa3d85213" />
+
 ### 2. Monthly Statistics
 
 A comprehensive report grouping entries by week and calculating long-term time balances.
 
 - **Command**: `Insert time tracker statistics month`.
 - **Code Block**: `simple-time-tracker-statistics-month`.
+
+<img width="857" height="578" alt="image" src="https://github.com/user-attachments/assets/9e690e5d-b395-4c4f-b52d-c334f3fe6e6f" />
+
 
 ## 📅 Managing Time Off
 
