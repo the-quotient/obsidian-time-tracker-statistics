@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "time-tracker-statistics",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Provides daily and monthly statistics views across your whole vault for the Simple Time Tracker plugin.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

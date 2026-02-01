@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "time-tracker-statistics",
+	"name": "Time Tracker Statistics",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"minAppVersion": "1.11.0",
+	"description": "Provides daily and monthly statistics views across your whole vault for the Super Simple Time Tracker by Ellpeck. ",
+	"author": "the-quotient",
+	"authorUrl": "https://github.com/the-quotient",
+	"fundingUrl": "",
 	"isDesktopOnly": false
 }
