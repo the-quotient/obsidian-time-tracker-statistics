@@ -53,7 +53,7 @@ interface WorkingTimeResult {
 
 function getSTTApi(app: App): STT_API | null {
     const internalApp = app as unknown as InternalApp;
-    const sttPlugin = internalApp.plugins.plugins["simple-time-tracker"];
+    const sttPlugin = internalApp.plugins?.plugins?.["simple-time-tracker"];
     if (!sttPlugin || !sttPlugin.api) {
         return null;
     }
@@ -81,31 +81,60 @@ function extractMonth(inputString: string): number | null {
     return monthMatch ? Number(monthMatch[0].replace("-", "")) : null;
 }
 
+function escapeMarkdown(text: string): string {
+    return text.replace(/\|/g, '\\|');
+}
 
-async function getWorkingTimeOfDay(dataviewApi: MinimalDataviewApi, plugin: TimeTrackerStatisticsPlugin, date: string): Promise<WorkingTimeResult> {
+function createEmptyResult(): WorkingTimeResult {
+    return {
+        totalDuration: 0,
+        fileCategories: [],
+        pageNames: [],
+        entryNames: [],
+        entryDurations: []
+    };
+}
+
+async function getWorkingTimeMap(
+    dataviewApi: MinimalDataviewApi, 
+    plugin: TimeTrackerStatisticsPlugin, 
+    startDate: string, 
+    endDate: string
+): Promise<Map<string, WorkingTimeResult>> {
     const api = getSTTApi(plugin.app);
     if (!api) throw new Error("Simple time tracker API not found");
 
-    const fileCategories: string[] = [];
-    const pageNames: string[] = [];
-    const entryNames: string[] = [];
-    const entryDurations: number[] = [];
-    const filteredEntries: Entry[] = [];
+    const resultMap = new Map<string, WorkingTimeResult>();
+    const startMoment = moment(startDate);
+    const endMoment = moment(endDate);
 
-    function processEntries(entries: Entry[], page: TFile, category: string, parentName = '') {
+    function processEntries(entries: Entry[], pageName: string, category: string, sttApi: STT_API, parentName = '') {
         entries.forEach(entry => {
-            if (extractDate(entry.startTime) === date) {
-                filteredEntries.push(entry);
-                fileCategories.push(category);
-                pageNames.push(page.basename);
-                const fullName = parentName ? `${parentName} -> ${entry.name}` : entry.name;
-                entryNames.push(fullName);
-                entryDurations.push(api!.getDuration(entry));
+            const dateStr = extractDate(entry.startTime);
+
+            if (dateStr) {
+                const entryDate = moment(dateStr);
+                if (entryDate.isSameOrAfter(startMoment) && entryDate.isSameOrBefore(endMoment)) {
+
+                    if (!resultMap.has(dateStr)) {
+                        resultMap.set(dateStr, createEmptyResult());
+                    }
+                    const result = resultMap.get(dateStr)!;
+
+                    const duration = sttApi.getDuration(entry);
+                    const fullName = parentName ? `${parentName} -> ${entry.name}` : entry.name;
+
+                    result.totalDuration += duration;
+                    result.fileCategories.push(category);
+                    result.pageNames.push(pageName);
+                    result.entryNames.push(fullName);
+                    result.entryDurations.push(duration);
+                }
             }
 
             if (entry.subEntries) {
                 const newParentName = parentName ? `${parentName} -> ${entry.name}` : entry.name;
-                processEntries(entry.subEntries, page, category, newParentName);
+                processEntries(entry.subEntries, pageName, category, sttApi, newParentName);
             }
         });
     }
@@ -131,17 +160,11 @@ async function getWorkingTimeOfDay(dataviewApi: MinimalDataviewApi, plugin: Time
         }
 
         for (const { tracker } of trackers) {
-            processEntries(tracker.entries, file, category);
+            processEntries(tracker.entries, file.basename, category, api);
         }
     }
 
-    return {
-        totalDuration: api.getTotalDuration(filteredEntries),
-        fileCategories,
-        pageNames,
-        entryNames,
-        entryDurations
-    };
+    return resultMap;
 }
 
 async function getRunningTrackerMarkdown(dataviewApi: MinimalDataviewApi, app: App): Promise<string> {
@@ -162,7 +185,7 @@ async function getRunningTrackerMarkdown(dataviewApi: MinimalDataviewApi, app: A
     return "_No tracker is currently running._\n";
 }
 
-export async function displayStatisticsDay(container: HTMLElement, plugin: TimeTrackerStatisticsPlugin, sourcePath: string, blockContent: string | undefined, component: Component): Promise<void> {
+export function displayStatisticsDay(container: HTMLElement, plugin: TimeTrackerStatisticsPlugin, sourcePath: string, blockContent: string | undefined, component: Component): void {
     const app = plugin.app;
     const api = getSTTApi(app);
 
@@ -180,8 +203,10 @@ export async function displayStatisticsDay(container: HTMLElement, plugin: TimeT
             return;
         }
 
-        const fileName = sourcePath.split('/').pop() || '';
+        const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
+        const fileName = sourceFile instanceof TFile ? sourceFile.name : (sourcePath.split('/').pop() || '');
         const date = extractDate(fileName);
+
         if (!date) {
             contentContainer.empty();
             contentContainer.createEl("p", { text: `Could not extract date (YYYY-MM-DD) from file name: "${fileName}"` });
@@ -191,7 +216,9 @@ export async function displayStatisticsDay(container: HTMLElement, plugin: TimeT
         try {
             contentContainer.empty();
             const runningTrackerMd = await getRunningTrackerMarkdown(dataviewApi, app);
-            const workingTime = await getWorkingTimeOfDay(dataviewApi, plugin, date);
+
+            const resultMap = await getWorkingTimeMap(dataviewApi, plugin, date, date);
+            const workingTime = resultMap.get(date) || createEmptyResult();
 
             let dailyReportMd = "";
             if (workingTime.totalDuration === 0) {
@@ -233,7 +260,7 @@ export async function displayStatisticsDay(container: HTMLElement, plugin: TimeT
                         }
                     }
 
-                    totalsTable += `| **${categoryName}** | ${api.formatDuration(trackedDuration)} |`;
+                    totalsTable += `| **${escapeMarkdown(categoryName)}** | ${api.formatDuration(trackedDuration)} |`;
                     if (showTargetColumns) {
                         totalsTable += ` ${remainingStr} | ${overtimeStr} |\n`;
                     } else {
@@ -252,9 +279,9 @@ export async function displayStatisticsDay(container: HTMLElement, plugin: TimeT
                     const entryName = workingTime.entryNames[i] || "Unknown";
                     const duration = workingTime.entryDurations[i] || 0;
 
-                    const entryKey = `**${pageName}-${entryName}**`;
+                    const entryKey = `**${escapeMarkdown(pageName)}-${escapeMarkdown(entryName)}**`;
                     const durStr = api.formatDuration(duration);
-                    breakdownTable += `| ${category} | ${entryKey} | ${durStr} |\n`;
+                    breakdownTable += `| ${escapeMarkdown(category)} | ${entryKey} | ${durStr} |\n`;
                 });
                 dailyReportMd = `#### Totals\n\n${totalsTable}\n\n#### Entries breakdown\n\n${breakdownTable}`;
             }
@@ -273,7 +300,7 @@ export async function displayStatisticsDay(container: HTMLElement, plugin: TimeT
     container.empty();
     container.addClass("simple-time-tracker-stats-container");
     const header = container.createDiv({ cls: "simple-time-tracker-stats-header" });
-    const titleGroup = header.createDiv({ attr: { style: "display: flex; align-items: center; gap: 0.5em;" } });
+    const titleGroup = header.createDiv({ cls: "stt-stats-title-group" });
     titleGroup.createEl("h4", { text: "Daily statistics" });
     const refreshButton = titleGroup.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Refresh" } });
     setIcon(refreshButton, "refresh-cw");
@@ -292,7 +319,7 @@ export async function displayStatisticsDay(container: HTMLElement, plugin: TimeT
     void renderReport(contentContainer);
 }
 
-export async function displayStatisticsMonth(container: HTMLElement, plugin: TimeTrackerStatisticsPlugin, sourcePath: string, blockContent: string, component: Component): Promise<void> {
+export function displayStatisticsMonth(container: HTMLElement, plugin: TimeTrackerStatisticsPlugin, sourcePath: string, blockContent: string, component: Component): void {
     const app = plugin.app;
     const api = getSTTApi(app);
     if (!api) {
@@ -328,7 +355,8 @@ export async function displayStatisticsMonth(container: HTMLElement, plugin: Tim
         const vacationDays = Array.isArray(settings.vacationDays) ? settings.vacationDays as number[] : [];
         const sickDays = Array.isArray(settings.sickDays) ? settings.sickDays as number[] : [];
 
-        const fileName = sourcePath.split('/').pop() || '';
+        const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
+        const fileName = sourceFile instanceof TFile ? sourceFile.name : (sourcePath.split('/').pop() || '');
         const year = extractYear(fileName);
         const monthIndex = extractMonth(fileName);
 
@@ -351,7 +379,7 @@ export async function displayStatisticsMonth(container: HTMLElement, plugin: Tim
     container.empty();
     container.addClass("simple-time-tracker-stats-container");
     const header = container.createDiv({ cls: "simple-time-tracker-stats-header" });
-    const titleGroup = header.createDiv({ attr: { style: "display: flex; align-items: center; gap: 0.5em;" } });
+    const titleGroup = header.createDiv({ cls: "stt-stats-title-group" });
     titleGroup.createEl("h4", { text: "Monthly statistics" });
     const refreshButton = titleGroup.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Refresh" } });
     setIcon(refreshButton, "refresh-cw");
@@ -382,7 +410,6 @@ async function printWorkingTimeOfMonth(
     sickDays: number[],
     component: Component
 ) {
-    moment.updateLocale('en', { week: { dow: plugin.settings.firstDayOfWeek } });
 
     const monthLookupTable = [
         { name: "January", days: 31 }, { name: "February", days: 28 }, { name: "March", days: 31 },
@@ -411,14 +438,12 @@ async function printWorkingTimeOfMonth(
 
     container.createEl("h4", { text: monthDetails.name });
 
-    const promises = [];
-    for (let i = 1; i <= monthDetails.days; i++) {
-        const day = i < 10 ? "0" + i : String(i);
-        const month = monthIndex < 10 ? "0" + monthIndex : String(monthIndex);
-        const date = `${year}-${month}-${day}`;
-        promises.push(getWorkingTimeOfDay(dataviewApi, plugin, date));
-    }
-    const results: (WorkingTimeResult | null)[] = await Promise.all(promises);
+    const monthStr = monthIndex < 10 ? "0" + monthIndex : String(monthIndex);
+    const lastDayStr = monthDetails.days < 10 ? "0" + monthDetails.days : String(monthDetails.days);
+    const startDate = `${year}-${monthStr}-01`;
+    const endDate = `${year}-${monthStr}-${lastDayStr}`;
+
+    const monthlyDataMap = await getWorkingTimeMap(dataviewApi, plugin, startDate, endDate);
 
     let weekRows: string[][] = [];
     let weeklyWorkTotal = 0;
@@ -426,27 +451,30 @@ async function printWorkingTimeOfMonth(
     let accumulatedDeviation = deviation;
     let weekStartDay = 1;
 
-    for (let i = 0; i < results.length; i++) {
-        const workingTime = results[i];
-        if(!workingTime) continue;
+    const endOfWeekIndex = plugin.settings.firstDayOfWeek === 1 ? 0 : 6;
 
-        const day = i + 1;
+    for (let i = 1; i <= monthDetails.days; i++) {
+        const day = i;
         const currentMoment = moment({ year: year, month: monthIndex - 1, day: day });
         const dayOfWeek = currentMoment.format("dd");
-        const weekNumber = currentMoment.week();
+        const weekNumber = plugin.settings.firstDayOfWeek === 1 ? currentMoment.isoWeek() : currentMoment.week();
+        const dateKey = currentMoment.format("YYYY-MM-DD");
+        const workingTime = monthlyDataMap.get(dateKey);
 
         let workDuration = 0, otherDuration = 0;
 
-        workingTime.fileCategories.forEach((category, index) => {
-            const isWork = plugin.settings.categories.find((c: Category) => c.name === category)?.tags.includes("#work");
-            const duration = workingTime.entryDurations[index] || 0;
+        if (workingTime) {
+            workingTime.fileCategories.forEach((category, index) => {
+                const isWork = plugin.settings.categories.find((c: Category) => c.name === category)?.tags.includes("#work");
+                const duration = workingTime.entryDurations[index] || 0;
 
-            if (isWork) {
-                workDuration += duration;
-            } else {
-                otherDuration += duration;
-            }
-        });
+                if (isWork) {
+                    workDuration += duration;
+                } else {
+                    otherDuration += duration;
+                }
+            });
+        }
 
         weeklyWorkTotal += workDuration;
         weeklyOtherTotal += otherDuration;
@@ -464,13 +492,13 @@ async function printWorkingTimeOfMonth(
             dayLabel,
             api.formatDuration(workDuration),
             api.formatDuration(otherDuration),
-            printBreakdown(workingTime, api)
+            workingTime ? printBreakdown(workingTime, api) : ""
         ]);
 
-        const dayOfWeekIndex = currentMoment.weekday();
+        const dayOfWeekIndex = currentMoment.day();
         const isLastDayOfMonth = day === monthDetails.days;
 
-        if (dayOfWeekIndex === 6 || isLastDayOfMonth) {
+        if (dayOfWeekIndex === endOfWeekIndex || isLastDayOfMonth) {
             const targetTimeForWeek = calculateTargetTime(weekStartDay, day, allDaysOff, HOURS_PER_DAY_OFF);
             accumulatedDeviation = renderWeekTableWithApp(plugin.app, container, api, weekRows, weeklyWorkTotal, weeklyOtherTotal, targetTimeForWeek, accumulatedDeviation, weekNumber, plugin, component);
             weeklyWorkTotal = 0;
@@ -559,6 +587,6 @@ function renderWeekTableWithApp(
 function printBreakdown(workingTime: WorkingTimeResult, api: STT_API): string {
     const { pageNames, entryNames, entryDurations } = workingTime;
     return pageNames.map((pageName: string, i: number) =>
-        `${pageName}-${entryNames[i]}: ${api.formatDuration(entryDurations[i] ?? 0)}`
+        `${escapeMarkdown(pageName)}-${escapeMarkdown(entryNames[i] ?? "Unknown")}: ${api.formatDuration(entryDurations[i] ?? 0)}`
     ).join('<br>');
 }

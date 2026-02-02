@@ -1,0 +1,9 @@
+.simple-time-tracker-stats-header {
+    margin-bottom: 1em;
+}
+
+.stt-stats-title-group {
+    display: flex; 
+    align-items: center; 
+    gap: 0.5em;
+}

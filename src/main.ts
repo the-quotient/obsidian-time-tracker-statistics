@@ -12,20 +12,20 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
 
         this.addSettingTab(new TimeTrackerStatisticsSettingsTab(this.app, this));
 
-        this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-day", async (s, e, i) => {
+        this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-day", (s, e, i) => {
             e.empty();
             const component = new MarkdownRenderChild(e);
 
-            await displayStatisticsDay(e, this, i.sourcePath, s, component);
+            displayStatisticsDay(e, this, i.sourcePath, s, component);
 
             i.addChild(component);
         });
 
-         this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-month", async (s, e, i) => {
+         this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-month", (s, e, i) => {
             e.empty();
             const component = new MarkdownRenderChild(e);
 
-            await displayStatisticsMonth(e, this, i.sourcePath, s, component);
+            displayStatisticsMonth(e, this, i.sourcePath, s, component);
 
             i.addChild(component);
         });
