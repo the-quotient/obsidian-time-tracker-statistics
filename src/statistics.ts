@@ -509,19 +509,20 @@ async function printWorkingTimeOfMonth(
     }
 
     container.createEl("h4", { text: "End of month summary" });
-    renderEndOfMonthSummaryWithApp(plugin.app, container, api, accumulatedDeviation, daysOff, vacationDays, sickDays, plugin, component);
+    renderEndOfMonthSummary(plugin.app, container, api, accumulatedDeviation, daysOff, vacationDays, sickDays, plugin, component, monthlyDataMap);
 }
 
-function renderEndOfMonthSummaryWithApp(
+function renderEndOfMonthSummary(
     app: App,
-    container: HTMLElement, 
-    api: STT_API, 
-    accumulatedDeviation: number, 
-    daysOff: number[], 
-    vacationDays: number[], 
+    container: HTMLElement,
+    api: STT_API,
+    accumulatedDeviation: number,
+    daysOff: number[],
+    vacationDays: number[],
     sickDays: number[],
     plugin: TimeTrackerStatisticsPlugin,
-    component: Component
+    component: Component,
+    monthlyDataMap: Map<string, WorkingTimeResult>
 ) {
     const headers = ["Metric", "Value"];
     let table = `| ${headers[0]} | ${headers[1]} |\n| --- | --- |\n`;
@@ -531,6 +532,25 @@ function renderEndOfMonthSummaryWithApp(
     table += `| **Number of days off** | **${daysOff.length}** |\n`;
     table += `| **Number of vacation days** | **${vacationDays.length}** |\n`;
     table += `| **Number of sick days** | **${sickDays.length}** |\n`;
+
+    const noteDurations = new Map<string, number>();
+    for (const workingTime of monthlyDataMap.values()) {
+        for (let i = 0; i < workingTime.pageNames.length; i++) {
+            const note = workingTime.pageNames[i] || "Unknown";
+            const duration = workingTime.entryDurations[i] || 0;
+            noteDurations.set(note, (noteDurations.get(note) || 0) + duration);
+        }
+    }
+
+    const sortedNoteDurations = Array.from(noteDurations.entries())
+        .sort((a, b) => b[1] - a[1]);
+
+    let breakdownTable = `\n\n| Note | Duration |\n|:---|:---|\n`;
+    for (const [note, duration] of sortedNoteDurations) {
+        breakdownTable += `| ${escapeMarkdown(note)} | ${api.formatDuration(duration)} |\n`;
+    }
+
+    table += breakdownTable;
 
     void MarkdownRenderer.render(app, table, container, "", component);
 }
