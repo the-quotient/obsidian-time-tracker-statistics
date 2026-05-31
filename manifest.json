@@ -1,7 +1,7 @@
 {
 	"id": "time-tracker-statistics",
 	"name": "Time Tracker Statistics",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.11.0",
 	"description": "Provides daily and monthly statistics views across your whole vault for the Super Simple Time Tracker by Ellpeck.",
 	"author": "the-quotient",

@@ -4,23 +4,23 @@ export interface Category {
     target: string;
 }
 
+export interface TimeTrackerStatisticsSettings {
+    firstDayOfWeek: number;
+    categories: Category[];
+}
+
 export const defaultSettings: TimeTrackerStatisticsSettings = {
     firstDayOfWeek: 1, //Monday
-    categories : [
+    categories: [
         {
             name: "Work",
             tags: ['#work'],
             target: "08:00:00"
         },
         {
-            name: "Leisure", 
+            name: "Leisure",
             tags: ['#leisure'],
             target: "00:00:00"
         }
     ]
 };
-
-export interface TimeTrackerStatisticsSettings {
-    firstDayOfWeek: number;
-    categories: Category[];
-}

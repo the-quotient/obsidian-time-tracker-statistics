@@ -1,7 +1,64 @@
-import { MarkdownRenderer, setIcon, TFile, App, moment, Component } from "obsidian";
+import {
+    MarkdownRenderer,
+    setIcon,
+    App,
+    moment,
+    Component
+} from "obsidian";
 import { getAPI } from "obsidian-dataview";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
+
+interface STTMomentDuration {
+    asMilliseconds(): number;
+}
+interface STTMoment {
+    isSameOrAfter(m: STTMoment): boolean;
+    isSameOrBefore(m: STTMoment): boolean;
+    format(fmt: string): string;
+    isoWeek(): number;
+    week(): number;
+    day(): number;
+}
+interface STTMomentFactory {
+    (input?: string | { year: number; month: number; day: number }): STTMoment;
+    duration(target: string): STTMomentDuration;
+}
+const safeMoment = moment as unknown as STTMomentFactory;
+
+interface SafeRenderer {
+    render(
+        app: App,
+        markdown: string,
+        el: HTMLElement,
+        sourcePath: string,
+        component: Component
+    ): Promise<void>;
+}
+const safeRenderer = MarkdownRenderer as unknown as SafeRenderer;
+
+interface ElementOptions {
+    text?: string;
+    cls?: string;
+    attr?: Record<string, string>;
+}
+interface ObsidianHTMLElement extends HTMLElement {
+    empty(): void;
+    createDiv(options?: ElementOptions): HTMLDivElement & ObsidianHTMLElement;
+    createEl<K extends keyof HTMLElementTagNameMap>(
+        tag: K,
+        options?: ElementOptions
+    ): HTMLElementTagNameMap[K] & ObsidianHTMLElement;
+    addClass(cls: string): void;
+}
+
+interface SafeTFile {
+    name: string;
+    basename: string;
+}
+interface SafeVault {
+    getAbstractFileByPath(path: string): SafeTFile | null;
+}
 
 export interface Entry {
     id: string;
@@ -68,7 +125,7 @@ function extractDate(input: string): string | null {
 
 function parseTargetTime(target: string): number {
     if (!target) return 0;
-    return moment.duration(target).asMilliseconds();
+    return safeMoment.duration(target).asMilliseconds();
 }
 
 function extractYear(inputString: string): number | null {
@@ -96,33 +153,44 @@ function createEmptyResult(): WorkingTimeResult {
 }
 
 async function getWorkingTimeMap(
-    dataviewApi: MinimalDataviewApi, 
-    plugin: TimeTrackerStatisticsPlugin, 
-    startDate: string, 
+    dataviewApi: MinimalDataviewApi,
+    plugin: TimeTrackerStatisticsPlugin,
+    startDate: string,
     endDate: string
 ): Promise<Map<string, WorkingTimeResult>> {
     const api = getSTTApi(plugin.app);
     if (!api) throw new Error("Simple time tracker API not found");
 
     const resultMap = new Map<string, WorkingTimeResult>();
-    const startMoment = moment(startDate);
-    const endMoment = moment(endDate);
+    const startMoment = safeMoment(startDate);
+    const endMoment = safeMoment(endDate);
 
-    function processEntries(entries: Entry[], pageName: string, category: string, sttApi: STT_API, parentName = '') {
+    function processEntries(
+        entries: Entry[],
+        pageName: string,
+        category: string,
+        sttApi: STT_API,
+        parentName = ''
+    ) {
         entries.forEach(entry => {
             const dateStr = extractDate(entry.startTime);
 
             if (dateStr) {
-                const entryDate = moment(dateStr);
-                if (entryDate.isSameOrAfter(startMoment) && entryDate.isSameOrBefore(endMoment)) {
+                const entryDate = safeMoment(dateStr);
+                const isAfterStart = entryDate.isSameOrAfter(startMoment);
+                const isBeforeEnd = entryDate.isSameOrBefore(endMoment);
 
+                if (isAfterStart && isBeforeEnd) {
                     if (!resultMap.has(dateStr)) {
                         resultMap.set(dateStr, createEmptyResult());
                     }
                     const result = resultMap.get(dateStr)!;
-
                     const duration = sttApi.getDuration(entry);
-                    const fullName = parentName ? `${parentName} -> ${entry.name}` : entry.name;
+
+                    let fullName = entry.name;
+                    if (parentName) {
+                        fullName = `${parentName} -> ${entry.name}`;
+                    }
 
                     result.totalDuration += duration;
                     result.fileCategories.push(category);
@@ -133,8 +201,17 @@ async function getWorkingTimeMap(
             }
 
             if (entry.subEntries) {
-                const newParentName = parentName ? `${parentName} -> ${entry.name}` : entry.name;
-                processEntries(entry.subEntries, pageName, category, sttApi, newParentName);
+                let newParentName = entry.name;
+                if (parentName) {
+                    newParentName = `${parentName} -> ${entry.name}`;
+                }
+                processEntries(
+                    entry.subEntries,
+                    pageName,
+                    category,
+                    sttApi,
+                    newParentName
+                );
             }
         });
     }
@@ -143,8 +220,10 @@ async function getWorkingTimeMap(
         if (!page.file?.path) continue;
 
         const filePath = page.file.path;
-        const file = plugin.app.vault.getAbstractFileByPath(filePath);
-        if (!(file instanceof TFile)) {
+        const vault = plugin.app.vault as unknown as SafeVault;
+        const file = vault.getAbstractFileByPath(filePath);
+
+        if (!file || typeof file.basename !== "string") {
             continue;
         }
 
@@ -167,7 +246,10 @@ async function getWorkingTimeMap(
     return resultMap;
 }
 
-async function getRunningTrackerMarkdown(dataviewApi: MinimalDataviewApi, app: App): Promise<string> {
+async function getRunningTrackerMarkdown(
+    dataviewApi: MinimalDataviewApi,
+    app: App
+): Promise<string> {
     const api = getSTTApi(app);
     if (!api) return "";
 
@@ -178,46 +260,76 @@ async function getRunningTrackerMarkdown(dataviewApi: MinimalDataviewApi, app: A
         const trackers = await api.loadAllTrackers(filePath);
         for (const { tracker } of trackers) {
             if (api.isRunning(tracker)) {
-                return `**Currently running:** [[${filePath}|${page.file.name ?? 'Untitled'}]]\n\n---\n`;
+                const name = page.file.name ?? 'Untitled';
+                return `**Currently running:** [[${filePath}|${name}]]\n` +
+                    `\n---\n`;
             }
         }
     }
     return "_No tracker is currently running._\n";
 }
 
-export function displayStatisticsDay(container: HTMLElement, plugin: TimeTrackerStatisticsPlugin, sourcePath: string, blockContent: string | undefined, component: Component): void {
+export function displayStatisticsDay(
+    container: HTMLElement,
+    plugin: TimeTrackerStatisticsPlugin,
+    sourcePath: string,
+    _blockContent: string | undefined,
+    component: Component
+): void {
+    const cont = container as ObsidianHTMLElement;
     const app = plugin.app;
     const api = getSTTApi(app);
 
     if (!api) {
-        container.empty();
-        container.createEl("p", { text: "Simple time tracker plugin is required." });
+        cont.innerHTML = "";
+        cont.createEl("p", { text: "Simple time tracker is required." });
         return;
     }
 
-    const renderReport = async (contentContainer: HTMLElement) => {
+    const renderReport = async (contentContainer: ObsidianHTMLElement) => {
         const dataviewApi = getAPI(app) as unknown as MinimalDataviewApi;
         if (!dataviewApi) {
-            contentContainer.empty();
-            contentContainer.createEl("p", { text: "Dataview plugin is not enabled..." });
+            contentContainer.innerHTML = "";
+            contentContainer.createEl("p", {
+                text: "Dataview plugin is not enabled..."
+            });
             return;
         }
 
-        const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
-        const fileName = sourceFile instanceof TFile ? sourceFile.name : (sourcePath.split('/').pop() || '');
+        const vault = app.vault as unknown as SafeVault;
+        const sourceFile = vault.getAbstractFileByPath(sourcePath);
+        let fileName = "";
+
+        if (sourceFile && typeof sourceFile.name === "string") {
+            fileName = sourceFile.name;
+        } else {
+            const parts = sourcePath.split('/');
+            fileName = parts[parts.length - 1] || "";
+        }
+
         const date = extractDate(fileName);
 
         if (!date) {
-            contentContainer.empty();
-            contentContainer.createEl("p", { text: `Could not extract date (YYYY-MM-DD) from file name: "${fileName}"` });
+            contentContainer.innerHTML = "";
+            const msg = `Could not extract date (YYYY-MM-DD) from ` +
+                `file name: "${fileName}"`;
+            contentContainer.createEl("p", { text: msg });
             return;
         }
 
         try {
-            contentContainer.empty();
-            const runningTrackerMd = await getRunningTrackerMarkdown(dataviewApi, app);
+            contentContainer.innerHTML = "";
+            const runningTrackerMd = await getRunningTrackerMarkdown(
+                dataviewApi,
+                app
+            );
 
-            const resultMap = await getWorkingTimeMap(dataviewApi, plugin, date, date);
+            const resultMap = await getWorkingTimeMap(
+                dataviewApi,
+                plugin,
+                date,
+                date
+            );
             const workingTime = resultMap.get(date) || createEmptyResult();
 
             let dailyReportMd = "";
@@ -233,25 +345,29 @@ export function displayStatisticsDay(container: HTMLElement, plugin: TimeTracker
                     categoryTotals[category] += dur;
                 });
 
-                const showTargetColumns = plugin.settings.categories.some((c: Category) => c.target);
+                const showTargetColumns = plugin.settings.categories.some(
+                    (c: Category) => c.target
+                );
 
                 let totalsTable = `| Category | Duration |`;
                 if (showTargetColumns) {
-                    totalsTable += ` Remaining | Overtime |\n|:---|:---|:---|:---|\n`;
+                    totalsTable += ` Remaining | Overtime |\n`;
+                    totalsTable += `|:---|:---|:---|:---|\n`;
                 } else {
                     totalsTable += `\n|:---|:---|\n`;
                 }
 
                 for (const categoryName in categoryTotals) {
-                    const category = plugin.settings.categories.find((c: Category) => c.name === categoryName);
-                    const trackedDuration = categoryTotals[categoryName] ?? 0;
+                    const isName = (c: Category) => c.name === categoryName;
+                    const category = plugin.settings.categories.find(isName);
+                    const trackedDur = categoryTotals[categoryName] ?? 0;
                     let remainingStr = "";
                     let overtimeStr = "";
 
                     if (category && category.target) {
                         const targetMs = parseTargetTime(category.target);
                         if (targetMs > 0) {
-                            const diffMs = trackedDuration - targetMs;
+                            const diffMs = trackedDur - targetMs;
                             if (diffMs < 0) {
                                 remainingStr = api.formatDuration(-diffMs);
                             } else {
@@ -260,7 +376,10 @@ export function displayStatisticsDay(container: HTMLElement, plugin: TimeTracker
                         }
                     }
 
-                    totalsTable += `| **${escapeMarkdown(categoryName)}** | ${api.formatDuration(trackedDuration)} |`;
+                    const escName = escapeMarkdown(categoryName);
+                    const durFmt = api.formatDuration(trackedDur);
+                    totalsTable += `| **${escName}** | ${durFmt} |`;
+
                     if (showTargetColumns) {
                         totalsTable += ` ${remainingStr} | ${overtimeStr} |\n`;
                     } else {
@@ -268,44 +387,73 @@ export function displayStatisticsDay(container: HTMLElement, plugin: TimeTracker
                     }
                 }
 
-                totalsTable += `| **Total** | **${api.formatDuration(workingTime.totalDuration)}** |`;
+                totalsTable += `| **Total** | `;
+                const tDur = api.formatDuration(workingTime.totalDuration);
+                totalsTable += `**${tDur}** |`;
                 if (showTargetColumns) {
                     totalsTable += ` | |`;
                 }
 
-                let breakdownTable = `| Category | Entry | Duration |\n|:---|:---|:---|\n`;
+                let breakdownTable = `| Category | Entry | Duration |\n`;
+                breakdownTable += `|:---|:---|:---|\n`;
+
                 workingTime.fileCategories.forEach((category, i) => {
-                    const pageName = workingTime.pageNames[i]?.toUpperCase() || "UNKNOWN";
+                    const pageName = workingTime.pageNames[i]?.toUpperCase()
+                        || "UNKNOWN";
                     const entryName = workingTime.entryNames[i] || "Unknown";
                     const duration = workingTime.entryDurations[i] || 0;
 
-                    const entryKey = `**${escapeMarkdown(pageName)}-${escapeMarkdown(entryName)}**`;
+                    const escPage = escapeMarkdown(pageName);
+                    const escEntry = escapeMarkdown(entryName);
+                    const entryKey = `**${escPage}-${escEntry}**`;
                     const durStr = api.formatDuration(duration);
-                    breakdownTable += `| ${escapeMarkdown(category)} | ${entryKey} | ${durStr} |\n`;
+                    const escCat = escapeMarkdown(category);
+
+                    breakdownTable += `| ${escCat} | ${entryKey} `;
+                    breakdownTable += `| ${durStr} |\n`;
                 });
-                dailyReportMd = `#### Totals\n\n${totalsTable}\n\n#### Entries breakdown\n\n${breakdownTable}`;
+
+                dailyReportMd = `#### Totals\n\n${totalsTable}\n\n`;
+                dailyReportMd += `#### Entries breakdown\n\n${breakdownTable}`;
             }
 
             const finalMarkdown = `${runningTrackerMd}\n${dailyReportMd}`;
-            contentContainer.empty();
-            await MarkdownRenderer.render(app, finalMarkdown, contentContainer, sourcePath, component);
+            contentContainer.innerHTML = "";
+            await safeRenderer.render(
+                app,
+                finalMarkdown,
+                contentContainer,
+                sourcePath,
+                component
+            );
 
         } catch (error) {
             console.error("Simple Time Tracker (Statistics) Error:", error);
-            contentContainer.empty();
-            contentContainer.createEl("p", { text: "An error occurred while generating the report." });
+            contentContainer.innerHTML = "";
+            contentContainer.createEl("p", {
+                text: "An error occurred while generating the report."
+            });
         }
     };
 
-    container.empty();
-    container.addClass("simple-time-tracker-stats-container");
-    const header = container.createDiv({ cls: "simple-time-tracker-stats-header" });
+    cont.innerHTML = "";
+    cont.addClass("simple-time-tracker-stats-container");
+    const header = cont.createDiv({
+        cls: "simple-time-tracker-stats-header"
+    });
     const titleGroup = header.createDiv({ cls: "stt-stats-title-group" });
     titleGroup.createEl("h4", { text: "Daily statistics" });
-    const refreshButton = titleGroup.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Refresh" } });
+
+    const refreshButton = titleGroup.createEl("button", {
+        cls: "clickable-icon",
+        attr: { "aria-label": "Refresh" }
+    }) as HTMLButtonElement;
+
     setIcon(refreshButton, "refresh-cw");
 
-    const contentContainer = container.createDiv({ cls: "simple-time-tracker-stats-content" });
+    const contentContainer = cont.createDiv({
+        cls: "simple-time-tracker-stats-content"
+    });
 
     refreshButton.addEventListener("click", () => {
         setIcon(refreshButton, "loader");
@@ -319,20 +467,30 @@ export function displayStatisticsDay(container: HTMLElement, plugin: TimeTracker
     void renderReport(contentContainer);
 }
 
-export function displayStatisticsMonth(container: HTMLElement, plugin: TimeTrackerStatisticsPlugin, sourcePath: string, blockContent: string, component: Component): void {
+export function displayStatisticsMonth(
+    container: HTMLElement,
+    plugin: TimeTrackerStatisticsPlugin,
+    sourcePath: string,
+    blockContent: string,
+    component: Component
+): void {
+    const cont = container as ObsidianHTMLElement;
     const app = plugin.app;
     const api = getSTTApi(app);
+
     if (!api) {
-        container.empty();
-        container.createEl("p", { text: "Simple time tracker plugin is required." });
+        cont.innerHTML = "";
+        cont.createEl("p", { text: "Simple time tracker is required." });
         return;
     }
 
-    const renderReport = async (contentContainer: HTMLElement) => {
+    const renderReport = async (contentContainer: ObsidianHTMLElement) => {
         const dataviewApi = getAPI(app) as unknown as MinimalDataviewApi;
         if (!dataviewApi) {
-            contentContainer.empty();
-            contentContainer.createEl("p", { text: "Dataview plugin is not enabled..." });
+            contentContainer.innerHTML = "";
+            contentContainer.createEl("p", {
+                text: "Dataview plugin is not enabled..."
+            });
             return;
         }
 
@@ -350,40 +508,78 @@ export function displayStatisticsMonth(container: HTMLElement, plugin: TimeTrack
             }
         });
 
-        const deviation = typeof settings.deviation === 'number' ? settings.deviation : 0;
-        const daysOff = Array.isArray(settings.daysOff) ? settings.daysOff as number[] : [];
-        const vacationDays = Array.isArray(settings.vacationDays) ? settings.vacationDays as number[] : [];
-        const sickDays = Array.isArray(settings.sickDays) ? settings.sickDays as number[] : [];
+        const deviation = typeof settings.deviation === 'number'
+            ? settings.deviation : 0;
+        const daysOff = Array.isArray(settings.daysOff)
+            ? (settings.daysOff as number[]) : [];
+        const vacationDays = Array.isArray(settings.vacationDays)
+            ? (settings.vacationDays as number[]) : [];
+        const sickDays = Array.isArray(settings.sickDays)
+            ? (settings.sickDays as number[]) : [];
 
-        const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
-        const fileName = sourceFile instanceof TFile ? sourceFile.name : (sourcePath.split('/').pop() || '');
+        const vault = app.vault as unknown as SafeVault;
+        const sourceFile = vault.getAbstractFileByPath(sourcePath);
+        let fileName = "";
+
+        if (sourceFile && typeof sourceFile.name === "string") {
+            fileName = sourceFile.name;
+        } else {
+            const parts = sourcePath.split('/');
+            fileName = parts[parts.length - 1] || "";
+        }
+
         const year = extractYear(fileName);
         const monthIndex = extractMonth(fileName);
 
         if (!year || !monthIndex) {
-            contentContainer.empty();
-            contentContainer.createEl("p", { text: `Could not extract year and month from file name: "${fileName}"` });
+            contentContainer.innerHTML = "";
+            const msg = `Could not extract year and month from ` +
+                `file name: "${fileName}"`;
+            contentContainer.createEl("p", { text: msg });
             return;
         }
 
         try {
-            contentContainer.empty();
-            await printWorkingTimeOfMonth(contentContainer, dataviewApi, plugin, api, year, monthIndex, deviation, daysOff, vacationDays, sickDays, component);
+            contentContainer.innerHTML = "";
+            await printWorkingTimeOfMonth(
+                contentContainer,
+                dataviewApi,
+                plugin,
+                api,
+                year,
+                monthIndex,
+                deviation,
+                daysOff,
+                vacationDays,
+                sickDays,
+                component
+            );
         } catch (error) {
-            console.error("Simple Time Tracker (Monthly Statistics) Error:", error);
-            contentContainer.empty();
-            contentContainer.createEl("p", { text: "An error occurred while generating the monthly report." });
+            console.error("Simple Time Tracker (Monthly) Error:", error);
+            contentContainer.innerHTML = "";
+            contentContainer.createEl("p", {
+                text: "An error occurred while generating the report."
+            });
         }
     };
 
-    container.empty();
-    container.addClass("simple-time-tracker-stats-container");
-    const header = container.createDiv({ cls: "simple-time-tracker-stats-header" });
+    cont.innerHTML = "";
+    cont.addClass("simple-time-tracker-stats-container");
+    const header = cont.createDiv({
+        cls: "simple-time-tracker-stats-header"
+    });
     const titleGroup = header.createDiv({ cls: "stt-stats-title-group" });
     titleGroup.createEl("h4", { text: "Monthly statistics" });
-    const refreshButton = titleGroup.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Refresh" } });
+
+    const refreshButton = titleGroup.createEl("button", {
+        cls: "clickable-icon",
+        attr: { "aria-label": "Refresh" }
+    }) as HTMLButtonElement;
+
     setIcon(refreshButton, "refresh-cw");
-    const contentContainer = container.createDiv({ cls: "simple-time-tracker-stats-content" });
+    const contentContainer = cont.createDiv({
+        cls: "simple-time-tracker-stats-content"
+    });
 
     refreshButton.addEventListener("click", () => {
         setIcon(refreshButton, "loader");
@@ -398,36 +594,40 @@ export function displayStatisticsMonth(container: HTMLElement, plugin: TimeTrack
 }
 
 async function printWorkingTimeOfMonth(
-    container: HTMLElement, 
-    dataviewApi: MinimalDataviewApi, 
-    plugin: TimeTrackerStatisticsPlugin, 
-    api: STT_API, 
-    year: number, 
-    monthIndex: number, 
-    deviation: number, 
-    daysOff: number[], 
-    vacationDays: number[], 
+    container: ObsidianHTMLElement,
+    dataviewApi: MinimalDataviewApi,
+    plugin: TimeTrackerStatisticsPlugin,
+    api: STT_API,
+    year: number,
+    monthIndex: number,
+    deviation: number,
+    daysOff: number[],
+    vacationDays: number[],
     sickDays: number[],
     component: Component
 ) {
-
-    const monthLookupTable = [
-        { name: "January", days: 31 }, { name: "February", days: 28 }, { name: "March", days: 31 },
-        { name: "April", days: 30 }, { name: "May", days: 31 }, { name: "June", days: 30 },
-        { name: "July", days: 31 }, { name: "August", days: 31 }, { name: "September", days: 30 },
-        { name: "October", days: 31 }, { name: "November", days: 30 }, { name: "December", days: 31 }
+    const monthLookupTable: { name: string, days: number }[] = [
+        { name: "January", days: 31 }, { name: "February", days: 28 },
+        { name: "March", days: 31 }, { name: "April", days: 30 },
+        { name: "May", days: 31 }, { name: "June", days: 30 },
+        { name: "July", days: 31 }, { name: "August", days: 31 },
+        { name: "September", days: 30 }, { name: "October", days: 31 },
+        { name: "November", days: 30 }, { name: "December", days: 31 }
     ];
+
     const HOURS_PER_DAY_OFF = 8 * 60 * 60 * 1000;
     const allDaysOff = new Set([...daysOff, ...vacationDays, ...sickDays]);
 
-    const isLeapYear = (year: number) => (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+    const isLeapYear = (y: number) => {
+        return (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+    };
 
-    const getMonthDetails = (year: number, monthIndex: number) => {
-        if (monthIndex < 1 || monthIndex > 12) return null;
-        const details = monthLookupTable[monthIndex - 1];
+    const getMonthDetails = (y: number, mIdx: number) => {
+        if (mIdx < 1 || mIdx > 12) return null;
+        const details = monthLookupTable[mIdx - 1];
         if (!details) return null;
 
-        if (monthIndex === 2 && isLeapYear(year)) {
+        if (mIdx === 2 && isLeapYear(y)) {
             return { name: details.name, days: 29 };
         }
         return details;
@@ -439,11 +639,18 @@ async function printWorkingTimeOfMonth(
     container.createEl("h4", { text: monthDetails.name });
 
     const monthStr = monthIndex < 10 ? "0" + monthIndex : String(monthIndex);
-    const lastDayStr = monthDetails.days < 10 ? "0" + monthDetails.days : String(monthDetails.days);
+    let lastDayStr = String(monthDetails.days);
+    if (monthDetails.days < 10) lastDayStr = "0" + lastDayStr;
+
     const startDate = `${year}-${monthStr}-01`;
     const endDate = `${year}-${monthStr}-${lastDayStr}`;
 
-    const monthlyDataMap = await getWorkingTimeMap(dataviewApi, plugin, startDate, endDate);
+    const monthlyDataMap = await getWorkingTimeMap(
+        dataviewApi,
+        plugin,
+        startDate,
+        endDate
+    );
 
     let weekRows: string[][] = [];
     let weeklyWorkTotal = 0;
@@ -455,9 +662,18 @@ async function printWorkingTimeOfMonth(
 
     for (let i = 1; i <= monthDetails.days; i++) {
         const day = i;
-        const currentMoment = moment({ year: year, month: monthIndex - 1, day: day });
+        const currentMoment = safeMoment({
+            year: year,
+            month: monthIndex - 1,
+            day: day
+        });
         const dayOfWeek = currentMoment.format("dd");
-        const weekNumber = plugin.settings.firstDayOfWeek === 1 ? currentMoment.isoWeek() : currentMoment.week();
+
+        let weekNumber = currentMoment.week();
+        if (plugin.settings.firstDayOfWeek === 1) {
+            weekNumber = currentMoment.isoWeek();
+        }
+
         const dateKey = currentMoment.format("YYYY-MM-DD");
         const workingTime = monthlyDataMap.get(dateKey);
 
@@ -465,7 +681,9 @@ async function printWorkingTimeOfMonth(
 
         if (workingTime) {
             workingTime.fileCategories.forEach((category, index) => {
-                const isWork = plugin.settings.categories.find((c: Category) => c.name === category)?.tags.includes("#work");
+                const isWorkCat = (c: Category) => c.name === category;
+                const isWork = plugin.settings.categories
+                    .find(isWorkCat)?.tags.includes("#work");
                 const duration = workingTime.entryDurations[index] || 0;
 
                 if (isWork) {
@@ -499,8 +717,24 @@ async function printWorkingTimeOfMonth(
         const isLastDayOfMonth = day === monthDetails.days;
 
         if (dayOfWeekIndex === endOfWeekIndex || isLastDayOfMonth) {
-            const targetTimeForWeek = calculateTargetTime(weekStartDay, day, allDaysOff, HOURS_PER_DAY_OFF);
-            accumulatedDeviation = renderWeekTableWithApp(plugin.app, container, api, weekRows, weeklyWorkTotal, weeklyOtherTotal, targetTimeForWeek, accumulatedDeviation, weekNumber, plugin, component);
+            const targetTimeForWeek = calculateTargetTime(
+                weekStartDay,
+                day,
+                allDaysOff,
+                HOURS_PER_DAY_OFF
+            );
+            accumulatedDeviation = renderWeekTableWithApp(
+                plugin.app,
+                container,
+                api,
+                weekRows,
+                weeklyWorkTotal,
+                weeklyOtherTotal,
+                targetTimeForWeek,
+                accumulatedDeviation,
+                weekNumber,
+                component
+            );
             weeklyWorkTotal = 0;
             weeklyOtherTotal = 0;
             weekRows = [];
@@ -509,26 +743,41 @@ async function printWorkingTimeOfMonth(
     }
 
     container.createEl("h4", { text: "End of month summary" });
-    renderEndOfMonthSummary(plugin.app, container, api, accumulatedDeviation, daysOff, vacationDays, sickDays, plugin, component, monthlyDataMap);
+    renderEndOfMonthSummary(
+        plugin.app,
+        container,
+        api,
+        accumulatedDeviation,
+        daysOff,
+        vacationDays,
+        sickDays,
+        component,
+        monthlyDataMap
+    );
 }
 
 function renderEndOfMonthSummary(
     app: App,
-    container: HTMLElement,
+    container: ObsidianHTMLElement,
     api: STT_API,
     accumulatedDeviation: number,
     daysOff: number[],
     vacationDays: number[],
     sickDays: number[],
-    plugin: TimeTrackerStatisticsPlugin,
     component: Component,
     monthlyDataMap: Map<string, WorkingTimeResult>
 ) {
     const headers = ["Metric", "Value"];
     let table = `| ${headers[0]} | ${headers[1]} |\n| --- | --- |\n`;
-    const accumulatedDeviationFormatted = `${(accumulatedDeviation >= 0 ? "+" : "-")}${api.formatDuration(Math.abs(accumulatedDeviation))}`;
-    table += `| **Total accumulated deviation** | **${accumulatedDeviationFormatted}** |\n`;
-    table += `| **Total accumulated deviation (ms)** | **${accumulatedDeviation}** |\n`;
+
+    const accDevFmt = api.formatDuration(Math.abs(accumulatedDeviation));
+    const sign = accumulatedDeviation >= 0 ? "+" : "-";
+    const accumulatedDeviationFormatted = `${sign}${accDevFmt}`;
+
+    table += `| **Total accumulated deviation** | `;
+    table += `**${accumulatedDeviationFormatted}** |\n`;
+    table += `| **Total accumulated deviation (ms)** | `;
+    table += `**${accumulatedDeviation}** |\n`;
     table += `| **Number of days off** | **${daysOff.length}** |\n`;
     table += `| **Number of vacation days** | **${vacationDays.length}** |\n`;
     table += `| **Number of sick days** | **${sickDays.length}** |\n`;
@@ -547,15 +796,22 @@ function renderEndOfMonthSummary(
 
     let breakdownTable = `\n\n| Note | Duration |\n|:---|:---|\n`;
     for (const [note, duration] of sortedNoteDurations) {
-        breakdownTable += `| ${escapeMarkdown(note)} | ${api.formatDuration(duration)} |\n`;
+        const escNote = escapeMarkdown(note);
+        const durFmt = api.formatDuration(duration);
+        breakdownTable += `| ${escNote} | ${durFmt} |\n`;
     }
 
     table += breakdownTable;
 
-    void MarkdownRenderer.render(app, table, container, "", component);
+    void safeRenderer.render(app, table, container, "", component);
 }
 
-function calculateTargetTime(weekStartDay: number, weekEndDay: number, daysOff: Set<number>, HOURS_PER_DAY_OFF: number): number {
+function calculateTargetTime(
+    weekStartDay: number,
+    weekEndDay: number,
+    daysOff: Set<number>,
+    HOURS_PER_DAY_OFF: number
+): number {
     const daysInWeek = weekEndDay - weekStartDay + 1;
     let totalTarget = daysInWeek * 8 * 60 * 60 * 1000;
     daysOff.forEach(day => {
@@ -568,21 +824,25 @@ function calculateTargetTime(weekStartDay: number, weekEndDay: number, daysOff: 
 
 function renderWeekTableWithApp(
     app: App,
-    container: HTMLElement, 
-    api: STT_API, 
-    rows: string[][], 
-    weeklyWorkTotal: number, 
-    weeklyOtherTotal: number, 
-    targetTimeForWeek: number, 
-    accumulatedDeviation: number, 
+    container: ObsidianHTMLElement,
+    api: STT_API,
+    rows: string[][],
+    weeklyWorkTotal: number,
+    weeklyOtherTotal: number,
+    targetTimeForWeek: number,
+    accumulatedDeviation: number,
     weekNumber: number,
-    plugin: TimeTrackerStatisticsPlugin,
     component: Component
 ): number {
-    container.createEl("h5", {text: `Week ${weekNumber}`})
+    container.createEl("h5", { text: `Week ${weekNumber}` });
     const headers = ["Day", "Work duration", "Other duration", "Entries"];
-    let table = `| ${headers[0]} | ${headers[1]} | ${headers[2]} | ${headers[3]} |\n| --- | --- | --- | --- |\n`;
-    rows.forEach(row => { table += `| ${row[0]} | ${row[1]} | ${row[2]} | ${row[3]} |\n`; });
+    let table = `| ${headers[0]} | ${headers[1]} `;
+    table += `| ${headers[2]} | ${headers[3]} |\n`;
+    table += `| --- | --- | --- | --- |\n`;
+
+    rows.forEach(row => {
+        table += `| ${row[0]} | ${row[1]} | ${row[2]} | ${row[3]} |\n`;
+    });
 
     const workTotalFormatted = api.formatDuration(weeklyWorkTotal);
     const otherTotalFormatted = api.formatDuration(weeklyOtherTotal);
@@ -590,23 +850,35 @@ function renderWeekTableWithApp(
     const weeklyDeviation = weeklyWorkTotal - targetTimeForWeek;
     accumulatedDeviation += weeklyDeviation;
 
-    let weeklyDeviationFormatted = api.formatDuration(Math.abs(weeklyDeviation));
-    weeklyDeviationFormatted = (weeklyDeviation >= 0 ? "+" : "-") + weeklyDeviationFormatted;
+    let weeklyDeviationFormatted = api.formatDuration(
+        Math.abs(weeklyDeviation)
+    );
+    weeklyDeviationFormatted = (weeklyDeviation >= 0 ? "+" : "-") +
+        weeklyDeviationFormatted;
 
-    let accumulatedDeviationFormatted = api.formatDuration(Math.abs(accumulatedDeviation));
-    accumulatedDeviationFormatted = (accumulatedDeviation >= 0 ? "+" : "-") + accumulatedDeviationFormatted;
+    let accDeviationFormatted = api.formatDuration(
+        Math.abs(accumulatedDeviation)
+    );
+    accDeviationFormatted = (accumulatedDeviation >= 0 ? "+" : "-") +
+        accDeviationFormatted;
 
-    table += `| **Total** | **${workTotalFormatted}** | **${otherTotalFormatted}** |  |\n`;
-    table += `| **Weekly deviation** | **${weeklyDeviationFormatted}** |  |  |\n`;
-    table += `| **Accumulated deviation** | **${accumulatedDeviationFormatted}** |  |  |\n`;
+    table += `| **Total** | **${workTotalFormatted}** `;
+    table += `| **${otherTotalFormatted}** |  |\n`;
+    table += `| **Weekly deviation** | **${weeklyDeviationFormatted}** `;
+    table += `|  |  |\n`;
+    table += `| **Accumulated deviation** | **${accDeviationFormatted}** `;
+    table += `|  |  |\n`;
 
-    void MarkdownRenderer.render(app, table, container, "", component);
+    void safeRenderer.render(app, table, container, "", component);
     return accumulatedDeviation;
 }
 
 function printBreakdown(workingTime: WorkingTimeResult, api: STT_API): string {
     const { pageNames, entryNames, entryDurations } = workingTime;
-    return pageNames.map((pageName: string, i: number) =>
-        `${escapeMarkdown(pageName)}-${escapeMarkdown(entryNames[i] ?? "Unknown")}: ${api.formatDuration(entryDurations[i] ?? 0)}`
-    ).join('<br>');
+    return pageNames.map((pageName: string, i: number) => {
+        const escName = escapeMarkdown(pageName);
+        const escEntry = escapeMarkdown(entryNames[i] ?? "Unknown");
+        const durFmt = api.formatDuration(entryDurations[i] ?? 0);
+        return `${escName}-${escEntry}: ${durFmt}`;
+    }).join('<br>');
 }

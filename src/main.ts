@@ -1,63 +1,97 @@
-import { MarkdownRenderChild, Plugin } from "obsidian";
+import {
+    MarkdownRenderChild,
+    Plugin,
+    MarkdownPostProcessorContext,
+    Editor
+} from "obsidian";
 import { defaultSettings, TimeTrackerStatisticsSettings } from "./settings";
 import { TimeTrackerStatisticsSettingsTab } from "./settings-tab";
 import { displayStatisticsDay, displayStatisticsMonth } from "./statistics";
 
 export default class TimeTrackerStatisticsPlugin extends Plugin {
-
-	settings: TimeTrackerStatisticsSettings;
+    settings: TimeTrackerStatisticsSettings;
 
     async onload(): Promise<void> {
         await this.loadSettings();
 
-        this.addSettingTab(new TimeTrackerStatisticsSettingsTab(this.app, this));
+        this.addSettingTab(
+            new TimeTrackerStatisticsSettingsTab(this.app, this)
+        );
 
-        this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-day", (s, e, i) => {
-            e.empty();
-            const component = new MarkdownRenderChild(e);
+        this.registerMarkdownCodeBlockProcessor(
+            "simple-time-tracker-statistics-day",
+            (
+                source: string,
+                el: HTMLElement,
+                ctx: MarkdownPostProcessorContext
+            ) => {
+                el.innerHTML = "";
+                const component = new MarkdownRenderChild(el);
 
-            displayStatisticsDay(e, this, i.sourcePath, s, component);
+                displayStatisticsDay(
+                    el,
+                    this,
+                    ctx.sourcePath,
+                    source,
+                    component
+                );
 
-            i.addChild(component);
-        });
+                ctx.addChild(component);
+            }
+        );
 
-         this.registerMarkdownCodeBlockProcessor("simple-time-tracker-statistics-month", (s, e, i) => {
-            e.empty();
-            const component = new MarkdownRenderChild(e);
+        this.registerMarkdownCodeBlockProcessor(
+            "simple-time-tracker-statistics-month",
+            (
+                source: string,
+                el: HTMLElement,
+                ctx: MarkdownPostProcessorContext
+            ) => {
+                el.innerHTML = "";
+                const component = new MarkdownRenderChild(el);
 
-            displayStatisticsMonth(e, this, i.sourcePath, s, component);
+                displayStatisticsMonth(
+                    el,
+                    this,
+                    ctx.sourcePath,
+                    source,
+                    component
+                );
 
-            i.addChild(component);
-        });
+                ctx.addChild(component);
+            }
+        );
 
         this.addCommand({
             id: `insert-stats-day`,
             name: `Insert time tracker statistics day`,
-            editorCallback: (e, _) => {
-                e.replaceSelection("```simple-time-tracker-statistics-day\n```\n");
+            editorCallback: (editor: Editor) => {
+                const block = "```simple-time-tracker-statistics-day\n```\n";
+                editor.replaceSelection(block);
             }
         });
 
         this.addCommand({
             id: `insert-stats-month`,
             name: `Insert time tracker statistics month`,
-            editorCallback: (e, _) => {
-                const block = `\`\`\`simple-time-tracker-statistics-month
-deviation = 0
-vacationDays = []
-sickDays = []
-daysOff = []
-\`\`\`
-`;
-                e.replaceSelection(block);
+            editorCallback: (editor: Editor) => {
+                const block = "```simple-time-tracker-statistics-month\n" +
+                    "deviation = 0\n" +
+                    "vacationDays = []\n" +
+                    "sickDays = []\n" +
+                    "daysOff = []\n" +
+                    "```\n";
+                editor.replaceSelection(block);
             }
         });
-
-
     }
 
     async loadSettings(): Promise<void> {
-        this.settings = Object.assign({}, defaultSettings, (await this.loadData()) as TimeTrackerStatisticsSettings);
+        this.settings = Object.assign(
+            {},
+            defaultSettings,
+            (await this.loadData()) as TimeTrackerStatisticsSettings
+        );
     }
 
     async saveSettings(): Promise<void> {
