@@ -33,7 +33,7 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
     }
 
     display(): void {
-        const container = this.containerEl as HTMLElement;
+        const container = this.containerEl;
         container.innerHTML = "";
 
         new SafeSettingClass(container)

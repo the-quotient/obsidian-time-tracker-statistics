@@ -447,7 +447,7 @@ export function displayStatisticsDay(
     const refreshButton = titleGroup.createEl("button", {
         cls: "clickable-icon",
         attr: { "aria-label": "Refresh" }
-    }) as HTMLButtonElement;
+    });
 
     setIcon(refreshButton, "refresh-cw");
 
@@ -574,7 +574,7 @@ export function displayStatisticsMonth(
     const refreshButton = titleGroup.createEl("button", {
         cls: "clickable-icon",
         attr: { "aria-label": "Refresh" }
-    }) as HTMLButtonElement;
+    });
 
     setIcon(refreshButton, "refresh-cw");
     const contentContainer = cont.createDiv({
