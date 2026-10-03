@@ -4,13 +4,19 @@ import TimeTrackerStatisticsPlugin from "./main";
 import {
     STT_API,
     MinimalDataviewApi,
+    PageTrackers,
     TrackedEntry,
     getSTTApi,
     loadPageTrackers,
     collectTrackedEntries,
     getDailyTarget
 } from "./statistics";
-import { DAY_OFF_TYPES, DayOffType, setDayOffType } from "./carry-over";
+import {
+    DAY_OFF_TYPES,
+    DayOffType,
+    resolveCarryOver,
+    setDayOffType
+} from "./carry-over";
 import { ChartSeries, ChartTooltip, renderEmpty } from "./charts";
 import {
     DistributionMode,
@@ -52,7 +58,9 @@ export class StatisticsDashboardModal extends Modal {
     private period: PeriodType = "day";
     private anchor: Date = startOfDay(new Date());
     private distributionMode: DistributionMode = "category";
+    private pages: PageTrackers[] = [];
     private entries: TrackedEntry[] = [];
+    private carryOvers = new Map<string, Promise<number>>();
     private running: { path: string; basename: string } | null = null;
     private months: MonthConfigCache;
     private saving = false;
@@ -204,6 +212,7 @@ export class StatisticsDashboardModal extends Modal {
             const pages = await loadPageTrackers(dataviewApi, this.app, api);
             if (token !== this.renderToken) return;
 
+            this.pages = pages;
             this.entries = collectTrackedEntries(
                 pages,
                 this.plugin.settings.categories,
@@ -216,6 +225,7 @@ export class StatisticsDashboardModal extends Modal {
                 ? { path: runningPage.path, basename: runningPage.basename }
                 : null;
             this.months.clear();
+            this.carryOvers.clear();
             this.loaded = true;
             await this.render();
         } catch (error) {
@@ -255,6 +265,7 @@ export class StatisticsDashboardModal extends Modal {
                 dayType
             );
             this.months.set(day, note);
+            this.carryOvers.clear();
         } catch (error) {
             console.error("Simple Time Tracker (Dashboard) Error:", error);
             new Notice("Could not update the monthly note.");
@@ -332,6 +343,10 @@ export class StatisticsDashboardModal extends Modal {
             range,
             dayTargets
         );
+        const accumulated = getDailyTarget(categories) > 0
+            ? await this.getAccumulatedDeviation(range, stats)
+            : null;
+        if (token !== this.renderToken) return;
         const series = getSeries(categories, stats);
         const chartOptions: PeriodChartsOptions = {
             period: this.period,
@@ -354,7 +369,7 @@ export class StatisticsDashboardModal extends Modal {
 
         this.tooltip.hide();
         this.bodyEl.empty();
-        this.renderTiles(stats, range);
+        this.renderTiles(stats, range, accumulated);
         if (this.period === "day") this.renderDayTypeCard(range.start);
 
         renderHeatmapCard(this.bodyEl, chartOptions);
@@ -372,7 +387,70 @@ export class StatisticsDashboardModal extends Modal {
         return createCard(this.bodyEl, title);
     }
 
-    private renderTiles(stats: PeriodStats, range: PeriodRange): void {
+    /** Deviation carried into the month of `day`, as in the monthly note. */
+    private getCarryOver(day: Date): Promise<number> {
+        const key = `${day.getFullYear()}-${day.getMonth() + 1}`;
+        let carryOver = this.carryOvers.get(key);
+        if (!carryOver) {
+            carryOver = this.resolveCarryOver(day);
+            this.carryOvers.set(key, carryOver);
+        }
+        return carryOver;
+    }
+
+    private async resolveCarryOver(day: Date): Promise<number> {
+        const { config, path } = this.months.get(day);
+        if (path && config.deviation !== "auto") return config.deviation;
+        if (!this.api) return 0;
+        const result = await resolveCarryOver(
+            this.plugin,
+            this.api,
+            this.pages,
+            day.getFullYear(),
+            day.getMonth() + 1
+        );
+        return result.deviation;
+    }
+
+    /**
+     * Deviation at the end of the period including the carry-over: the
+     * carry-over into the first month, the deviation of that month before
+     * the period, and the deviation of the period itself.
+     */
+    private async getAccumulatedDeviation(
+        range: PeriodRange,
+        stats: PeriodStats
+    ): Promise<number> {
+        const monthStart = new Date(
+            range.start.getFullYear(),
+            range.start.getMonth(),
+            1
+        );
+        let deviation = await this.getCarryOver(monthStart) +
+            stats.work - stats.target;
+        if (monthStart < range.start) {
+            const categories = this.plugin.settings.categories;
+            const days = getPeriodRange(
+                "month",
+                monthStart,
+                this.plugin.settings.firstDayOfWeek
+            ).days.filter(day => day < range.start);
+            const before = computePeriodStats(
+                this.entries,
+                categories,
+                { start: monthStart, end: addDays(range.start, -1), days },
+                this.months.getDayTargets(days, categories)
+            );
+            deviation += before.work - before.target;
+        }
+        return deviation;
+    }
+
+    private renderTiles(
+        stats: PeriodStats,
+        range: PeriodRange,
+        accumulated: number | null
+    ): void {
         const tiles = this.bodyEl.createDiv({ cls: "stt-tiles" });
         const addTile = (label: string, value: string, hint?: string) => {
             const tile = tiles.createDiv({ cls: "stt-tile" });
@@ -382,8 +460,7 @@ export class StatisticsDashboardModal extends Modal {
         };
 
         addTile("Total tracked", this.format(stats.total));
-        const hasTarget = getDailyTarget(this.plugin.settings.categories) > 0;
-        if (hasTarget) {
+        if (accumulated !== null) {
             addTile("Work", this.format(stats.work));
             addTile(
                 "Target",
@@ -394,6 +471,12 @@ export class StatisticsDashboardModal extends Modal {
                 "Deviation",
                 this.formatSigned(stats.work - stats.target),
                 stats.targetIsPartial ? "Up to today" : undefined
+            );
+            addTile(
+                "Accumulated deviation",
+                this.formatSigned(accumulated),
+                stats.targetIsPartial ? "Incl. carry-over, up to today"
+                    : "Incl. carry-over"
             );
         }
         if (this.period !== "day") {

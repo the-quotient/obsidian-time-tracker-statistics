@@ -911,6 +911,7 @@ async function renderMonthReport(
     } else {
         accumulatedDeviation = config.deviation;
     }
+    const startDeviation = accumulatedDeviation;
 
     const monthlyDataMap = getWorkingTimeMap(
         pages,
@@ -972,7 +973,12 @@ async function renderMonthReport(
     await renderMarkdown(
         container,
         context,
-        buildMonthSummary(api, accumulatedDeviation, config) + "\n\n" +
+        buildMonthSummary(
+            api,
+            accumulatedDeviation - startDeviation,
+            accumulatedDeviation,
+            config
+        ) + "\n\n" +
             buildNotesTable(api, monthlyDataMap)
     );
     await renderCharts(
@@ -998,10 +1004,13 @@ function getCarryOverMarkdown(
 
 function buildMonthSummary(
     api: STT_API,
+    monthlyDeviation: number,
     accumulatedDeviation: number,
     config: MonthConfig
 ): string {
     let table = `| Metric | Value |\n| --- | --- |\n`;
+    table += `| **Monthly deviation** | `;
+    table += `**${formatSigned(api, monthlyDeviation)}** |\n`;
     table += `| **Total accumulated deviation** | `;
     table += `**${formatSigned(api, accumulatedDeviation)}** |\n`;
     table += `| **Total accumulated deviation (ms)** | `;

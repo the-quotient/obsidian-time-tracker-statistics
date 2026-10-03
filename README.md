@@ -61,7 +61,7 @@ A comprehensive report grouping entries by week and calculating long-term time b
 
 - **Carry-Over**: The deviation carried over from the previous month (see [Automatic Carry-Over](#automatic-carry-over)).
 - **Week Tables**: One table per week with the weekly deviation and the accumulated deviation of the month.
-- **End of Month Summary**: The total accumulated deviation, the number of days off, vacation and sick days, and the time per note.
+- **End of Month Summary**: The deviation of the month itself and the total accumulated deviation including the carry-over, the number of days off, vacation and sick days, and the time per note.
 
 The monthly note also stores your days off, see [Managing Time Off](#managing-time-off).
 
@@ -98,7 +98,7 @@ A popup window with interactive charts for the whole vault. It works independent
 
 **Each view includes:**
 
-- **Summary tiles**: Total tracked time, work time, target, deviation, active days and daily average. For the current period, target and deviation are counted up to today.
+- **Summary tiles**: Total tracked time, work time, target, deviation of the period, accumulated deviation including the carry-over from the monthly notes, active days and daily average. For the current period, target and deviation are counted up to today.
 - **Heatmap**: A calendar of daily totals (Year, Month), or the time tracked per hour (Week: per day, Day: per category). Days off are outlined.
 - **Bar chart**: Time per month, day or hour, stacked by category, with the daily target marked.
 - **Distribution**: A donut chart of the tracked time by category or by note.
