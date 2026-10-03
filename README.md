@@ -49,10 +49,18 @@ Adjust these values directly within the code block:
 
 |Parameter|Type|Description|
 |---|---|---|
-|**`deviation`**|`number`|Time (in **milliseconds**) to carry over from a previous month. Copy it from the *Total accumulated deviation (ms)* row of the previous month's summary.|
+|**`deviation`**|`auto` \| `number`|Deviation carried over from the previous month. `auto` calculates it from the previous month's note (see below). A number (in **milliseconds**) sets it manually, e.g. copied from the *Total accumulated deviation (ms)* row of the previous month's summary.|
 |**`vacationDays`**|`number[]`|Days of the month to be excluded from work targets (e.g., `[1, 2, 3]`).|
 |**`sickDays`**|`number[]`|Dates marked as sick leave; reduces the work target.|
 |**`daysOff`**|`number[]`|Public holidays or other non-working days. Weekends don't need to be listed.|
+
+### Automatic Carry-Over
+
+With `deviation = auto` (the default for newly inserted blocks), the plugin looks for the previous month's note by its file name (e.g. `2026-09.md` for `2026-10.md`) and uses that month's total accumulated deviation as the starting value. The link to the source note is shown above the first week.
+
+- If the previous note also uses `auto`, the plugin keeps going back month by month.
+- The chain stops at the first note with a numeric `deviation`, or at the first month without a note (which counts as `0`).
+- Past months are recalculated with your **current** category targets. If your targets changed, set a numeric `deviation` in the first month with the new targets to freeze the earlier values.
 
 ## Setting Up Categories
 
@@ -70,5 +78,4 @@ To make the statistics meaningful, map your vault's tags to categories in the **
 
 ## Roadmap
 
-- Automate the carry-over of deviation values between months.
 - Add yearly summaries.

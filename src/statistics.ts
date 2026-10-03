@@ -8,6 +8,16 @@ import {
 import { getAPI } from "obsidian-dataview";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
+import {
+    MonthConfig,
+    CarryOverResult,
+    parseMonthConfig,
+    getMonthDetails,
+    getMonthRange,
+    getDayWorkAndOther,
+    isTargetDay,
+    resolveCarryOver
+} from "./carry-over";
 
 interface STTMomentDuration {
     asMilliseconds(): number;
@@ -20,7 +30,6 @@ interface STTMoment {
     clone(): STTMoment;
     locale(locale: string): STTMoment;
     isoWeek(): number;
-    isoWeekday(): number;
     week(): number;
     day(): number;
 }
@@ -104,7 +113,7 @@ interface InternalApp extends App {
     };
 }
 
-interface WorkingTimeResult {
+export interface WorkingTimeResult {
     totalDuration: number;
     fileCategories: string[];
     pageNames: string[];
@@ -138,31 +147,24 @@ function parseTargetTime(target: string): number {
     return safeMoment.duration(target).asMilliseconds();
 }
 
-function isWorkCategory(category: Category): boolean {
+export function isWorkCategory(category: Category): boolean {
     return parseTargetTime(category.target) > 0;
 }
 
-function getDailyTarget(categories: Category[]): number {
+export function getDailyTarget(categories: Category[]): number {
     return categories
         .filter(isWorkCategory)
         .reduce((total, c) => total + parseTargetTime(c.target), 0);
 }
 
-function extractYear(inputString: string): number | null {
+export function extractYear(inputString: string): number | null {
     const yearMatch = String(inputString).match(/\b\d{4}\b/);
     return yearMatch ? Number(yearMatch[0]) : null;
 }
 
-function extractMonth(inputString: string): number | null {
+export function extractMonth(inputString: string): number | null {
     const monthMatch = String(inputString).match(/\b-\d{2}\b/);
     return monthMatch ? Number(monthMatch[0].replace("-", "")) : null;
-}
-
-function parseDayList(value: unknown): number[] {
-    if (!Array.isArray(value)) return [];
-    return value.filter(
-        (day): day is number => typeof day === "number" && Number.isInteger(day)
-    );
 }
 
 function escapeMarkdown(text: string): string {
@@ -179,7 +181,7 @@ function createEmptyResult(): WorkingTimeResult {
     };
 }
 
-interface PageTrackers {
+export interface PageTrackers {
     path: string;
     basename: string;
     tags: string[];
@@ -215,7 +217,7 @@ async function loadPageTrackers(
     return result;
 }
 
-function getWorkingTimeMap(
+export function getWorkingTimeMap(
     pages: PageTrackers[],
     plugin: TimeTrackerStatisticsPlugin,
     api: STT_API,
@@ -532,25 +534,7 @@ export function displayStatisticsMonth(
             return;
         }
 
-        const settings: Record<string, unknown> = {};
-        blockContent.split('\n').forEach(line => {
-            const parts = line.split('=');
-            if (parts.length === 2) {
-                const key = parts[0]?.trim() || "";
-                const value = parts[1]?.trim() || "";
-                try {
-                    settings[key] = JSON.parse(value);
-                } catch {
-                    settings[key] = value;
-                }
-            }
-        });
-
-        const deviation = typeof settings.deviation === 'number'
-            ? settings.deviation : 0;
-        const daysOff = parseDayList(settings.daysOff);
-        const vacationDays = parseDayList(settings.vacationDays);
-        const sickDays = parseDayList(settings.sickDays);
+        const config = parseMonthConfig(blockContent);
 
         const vault = app.vault as unknown as SafeVault;
         const sourceFile = vault.getAbstractFileByPath(sourcePath);
@@ -583,10 +567,7 @@ export function displayStatisticsMonth(
                 api,
                 year,
                 monthIndex,
-                deviation,
-                daysOff,
-                vacationDays,
-                sickDays,
+                config,
                 sourcePath,
                 component
             );
@@ -636,53 +617,43 @@ async function printWorkingTimeOfMonth(
     api: STT_API,
     year: number,
     monthIndex: number,
-    deviation: number,
-    daysOff: number[],
-    vacationDays: number[],
-    sickDays: number[],
+    config: MonthConfig,
     sourcePath: string,
     component: Component
 ) {
-    const monthLookupTable: { name: string, days: number }[] = [
-        { name: "January", days: 31 }, { name: "February", days: 28 },
-        { name: "March", days: 31 }, { name: "April", days: 30 },
-        { name: "May", days: 31 }, { name: "June", days: 30 },
-        { name: "July", days: 31 }, { name: "August", days: 31 },
-        { name: "September", days: 30 }, { name: "October", days: 31 },
-        { name: "November", days: 30 }, { name: "December", days: 31 }
-    ];
-
+    const { daysOff, vacationDays, sickDays } = config;
     const dailyTarget = getDailyTarget(plugin.settings.categories);
-    const allDaysOff = new Set([...daysOff, ...vacationDays, ...sickDays]);
-
-    const isLeapYear = (y: number) => {
-        return (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
-    };
-
-    const getMonthDetails = (y: number, mIdx: number) => {
-        if (mIdx < 1 || mIdx > 12) return null;
-        const details = monthLookupTable[mIdx - 1];
-        if (!details) return null;
-
-        if (mIdx === 2 && isLeapYear(y)) {
-            return { name: details.name, days: 29 };
-        }
-        return details;
-    };
 
     const monthDetails = getMonthDetails(year, monthIndex);
-    if (!monthDetails) throw new Error("Invalid month index");
+    const monthRange = getMonthRange(year, monthIndex);
+    if (!monthDetails || !monthRange) throw new Error("Invalid month index");
+    const { startDate, endDate } = monthRange;
 
     container.createEl("h4", { text: monthDetails.name });
 
-    const monthStr = monthIndex < 10 ? "0" + monthIndex : String(monthIndex);
-    let lastDayStr = String(monthDetails.days);
-    if (monthDetails.days < 10) lastDayStr = "0" + lastDayStr;
-
-    const startDate = `${year}-${monthStr}-01`;
-    const endDate = `${year}-${monthStr}-${lastDayStr}`;
-
     const pages = await loadPageTrackers(dataviewApi, plugin.app, api);
+
+    let deviation = 0;
+    if (config.deviation === "auto") {
+        const carryOver = await resolveCarryOver(
+            plugin,
+            api,
+            pages,
+            year,
+            monthIndex
+        );
+        deviation = carryOver.deviation;
+        void safeRenderer.render(
+            plugin.app,
+            getCarryOverMarkdown(carryOver, api),
+            container.createDiv(),
+            sourcePath,
+            component
+        );
+    } else {
+        deviation = config.deviation;
+    }
+
     const monthlyDataMap = getWorkingTimeMap(
         pages,
         plugin,
@@ -716,30 +687,15 @@ async function printWorkingTimeOfMonth(
         const dateKey = currentMoment.format("YYYY-MM-DD");
         const workingTime = monthlyDataMap.get(dateKey);
 
-        let workDuration = 0, otherDuration = 0;
-
-        if (workingTime) {
-            workingTime.fileCategories.forEach((category, index) => {
-                const isName = (c: Category) => c.name === category;
-                const categorySettings = plugin.settings.categories
-                    .find(isName);
-                const isWork = categorySettings
-                    ? isWorkCategory(categorySettings) : false;
-                const duration = workingTime.entryDurations[index] || 0;
-
-                if (isWork) {
-                    workDuration += duration;
-                } else {
-                    otherDuration += duration;
-                }
-            });
-        }
+        const { workDuration, otherDuration } = getDayWorkAndOther(
+            workingTime,
+            plugin.settings.categories
+        );
 
         weeklyWorkTotal += workDuration;
         weeklyOtherTotal += otherDuration;
 
-        const isWeekday = currentMoment.isoWeekday() <= 5;
-        if (isWeekday && !allDaysOff.has(day)) {
+        if (isTargetDay(year, monthIndex, day, config)) {
             weeklyTarget += dailyTarget;
         }
 
@@ -796,6 +752,19 @@ async function printWorkingTimeOfMonth(
         component,
         monthlyDataMap
     );
+}
+
+function getCarryOverMarkdown(
+    carryOver: CarryOverResult,
+    api: STT_API
+): string {
+    if (!carryOver.source) {
+        return "_No previous month note found; starting at 0._";
+    }
+    const { path, basename } = carryOver.source;
+    const sign = carryOver.deviation >= 0 ? "+" : "-";
+    const value = api.formatDuration(Math.abs(carryOver.deviation));
+    return `**Carried over:** ${sign}${value} from [[${path}|${basename}]]`;
 }
 
 function renderEndOfMonthSummary(

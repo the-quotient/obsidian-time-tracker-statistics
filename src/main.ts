@@ -75,7 +75,7 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
             name: "Insert monthly statistics",
             editorCallback: (editor: Editor) => {
                 const block = "```simple-time-tracker-statistics-month\n" +
-                    "deviation = 0\n" +
+                    "deviation = auto\n" +
                     "vacationDays = []\n" +
                     "sickDays = []\n" +
                     "daysOff = []\n" +
