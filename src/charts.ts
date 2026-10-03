@@ -370,6 +370,8 @@ export interface HeatCell {
     value: number;
     title: string;
     text?: string;
+    detail?: string;
+    marked?: boolean;
     onClick?: () => void;
 }
 
@@ -429,7 +431,8 @@ export function renderHeatmap(
         const group = svgEl(svg, "g", {}, "stt-heat-group");
         svgEl(group, "rect", {
             x, y, width: cellSize, height: cellSize, rx: 2
-        }, `stt-heat-cell stt-heat-${level}`);
+        }, `stt-heat-cell stt-heat-${level}` +
+            (cell.marked ? " is-marked" : ""));
         if (cell.text) {
             const text = svgEl(group, "text", {
                 x: x + cellSize / 2,
@@ -442,7 +445,10 @@ export function renderHeatmap(
             group,
             tooltip,
             cell.title,
-            [cell.value > 0 ? format(cell.value) : "No tracked time"],
+            [
+                cell.value > 0 ? format(cell.value) : "No tracked time",
+                ...(cell.detail ? [cell.detail] : [])
+            ],
             cell.onClick
         );
     }

@@ -442,3 +442,44 @@
     font-weight: var(--font-semibold);
     margin-bottom: 2px;
 }
+
+.stt-heat-cell.is-marked {
+    stroke: var(--text-faint);
+    stroke-dasharray: 3 2;
+}
+
+.stt-card-hint {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.stt-days-off {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.stt-day-off {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 2px 2px 10px;
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+    font-size: var(--font-ui-small);
+}
+
+.stt-day-off a {
+    color: var(--text-normal);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.stt-day-off-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}

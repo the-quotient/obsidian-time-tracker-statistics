@@ -1,4 +1,4 @@
-import { App } from "obsidian";
+import { App, TFile, normalizePath } from "obsidian";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
 import {
@@ -20,6 +20,19 @@ export interface MonthConfig {
     daysOff: number[];
     vacationDays: number[];
     sickDays: number[];
+}
+
+export type DayOffType = "daysOff" | "vacationDays" | "sickDays";
+
+export const DAY_OFF_TYPES: { type: DayOffType; label: string }[] = [
+    { type: "daysOff", label: "Day off" },
+    { type: "vacationDays", label: "Vacation" },
+    { type: "sickDays", label: "Sick" }
+];
+
+export interface MonthNote {
+    file: CarryOverFile;
+    config: MonthConfig;
 }
 
 export interface MonthDetails {
@@ -204,20 +217,27 @@ function getPreviousMonth(
     return { year, monthIndex: monthIndex - 1 };
 }
 
-function extractMonthBlock(content: string): string | null {
-    const start = content.indexOf(MONTH_BLOCK_START);
-    if (start === -1) return null;
-    const bodyStart = content.indexOf("\n", start);
+function locateMonthBlock(
+    content: string
+): { start: number; end: number } | null {
+    const fence = content.indexOf(MONTH_BLOCK_START);
+    if (fence === -1) return null;
+    const bodyStart = content.indexOf("\n", fence);
     if (bodyStart === -1) return null;
     const end = content.indexOf("```", bodyStart);
-    return content.slice(bodyStart + 1, end === -1 ? undefined : end);
+    return { start: bodyStart + 1, end: end === -1 ? content.length : end };
 }
 
-async function findMonthNote(
+function extractMonthBlock(content: string): string | null {
+    const block = locateMonthBlock(content);
+    return block ? content.slice(block.start, block.end) : null;
+}
+
+export async function findMonthNote(
     app: App,
     year: number,
     monthIndex: number
-): Promise<{ file: CarryOverFile; config: MonthConfig } | null> {
+): Promise<MonthNote | null> {
     const vault = app.vault as unknown as CarryOverVault;
     const candidates = vault.getMarkdownFiles()
         .filter(file =>
@@ -235,13 +255,100 @@ async function findMonthNote(
     return null;
 }
 
-export async function loadMonthConfig(
-    app: App,
+export function getDayOffType(
+    config: MonthConfig,
+    day: number
+): DayOffType | null {
+    const match = DAY_OFF_TYPES.find(({ type }) => config[type].includes(day));
+    return match ? match.type : null;
+}
+
+function formatDayList(days: number[]): string {
+    return `[${days.join(", ")}]`;
+}
+
+function writeDayLists(body: string, config: MonthConfig): string {
+    const lines = body.split("\n");
+    const missing = new Set<DayOffType>(DAY_OFF_TYPES.map(({ type }) => type));
+    const updated = lines.map(line => {
+        const parts = line.split("=");
+        const key = parts[0]?.trim() as DayOffType;
+        if (parts.length !== 2 || !missing.has(key)) return line;
+        missing.delete(key);
+        return `${key} = ${formatDayList(config[key])}`;
+    });
+
+    let insertAt = updated.length;
+    while (insertAt > 0 && updated[insertAt - 1]?.trim() === "") insertAt--;
+    updated.splice(
+        insertAt,
+        0,
+        ...Array.from(missing, key => `${key} = ${formatDayList(config[key])}`)
+    );
+    return updated.join("\n");
+}
+
+function createMonthBlock(config: MonthConfig): string {
+    return MONTH_BLOCK_START + "\n" +
+        writeDayLists("deviation = auto\n", config) + "```\n";
+}
+
+function writeMonthConfig(content: string, config: MonthConfig): string {
+    const block = locateMonthBlock(content);
+    if (!block) {
+        const separator = content === "" || content.endsWith("\n\n") ? ""
+            : content.endsWith("\n") ? "\n" : "\n\n";
+        return content + separator + createMonthBlock(config);
+    }
+    let body = writeDayLists(content.slice(block.start, block.end), config);
+    if (!body.endsWith("\n")) body += "\n";
+    const closing = block.end === content.length ? "```\n" : "";
+    return content.slice(0, block.start) + body + closing +
+        content.slice(block.end);
+}
+
+async function ensureFolder(app: App, folder: string): Promise<void> {
+    if (folder === "/" || app.vault.getAbstractFileByPath(folder)) return;
+    await app.vault.createFolder(folder);
+}
+
+export async function setDayOffType(
+    plugin: TimeTrackerStatisticsPlugin,
     year: number,
-    monthIndex: number
-): Promise<MonthConfig | null> {
+    monthIndex: number,
+    day: number,
+    dayType: DayOffType | null
+): Promise<MonthNote> {
+    const app = plugin.app;
     const note = await findMonthNote(app, year, monthIndex);
-    return note ? note.config : null;
+    const base: MonthConfig = note?.config ??
+        { deviation: "auto", daysOff: [], vacationDays: [], sickDays: [] };
+
+    const config: MonthConfig = { ...base };
+    for (const { type } of DAY_OFF_TYPES) {
+        const days = base[type].filter(d => d !== day);
+        if (type === dayType) days.push(day);
+        config[type] = days.sort((a, b) => a - b);
+    }
+
+    const folder = normalizePath(plugin.settings.monthlyNotesFolder || "/");
+    const name = `${year}-${pad(monthIndex)}.md`;
+    const path = note?.file.path ??
+        normalizePath(folder === "/" ? name : `${folder}/${name}`);
+
+    const existing = app.vault.getAbstractFileByPath(path);
+    let file: TFile;
+    if (existing instanceof TFile) {
+        await app.vault.process(existing, content =>
+            writeMonthConfig(content, config));
+        file = existing;
+    } else if (existing) {
+        throw new Error(`"${path}" is not a file.`);
+    } else {
+        await ensureFolder(app, folder);
+        file = await app.vault.create(path, createMonthBlock(config));
+    }
+    return { file, config };
 }
 
 export async function resolveCarryOver(

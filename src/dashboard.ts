@@ -1,4 +1,4 @@
-import { App, Modal, moment, setIcon } from "obsidian";
+import { App, Modal, Notice, moment, setIcon } from "obsidian";
 import { getAPI } from "obsidian-dataview";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
@@ -12,7 +12,15 @@ import {
     getDailyTarget,
     isWorkCategory
 } from "./statistics";
-import { MonthConfig, isTargetDay, loadMonthConfig } from "./carry-over";
+import {
+    DAY_OFF_TYPES,
+    DayOffType,
+    MonthConfig,
+    findMonthNote,
+    getDayOffType,
+    isTargetDay,
+    setDayOffType
+} from "./carry-over";
 import {
     BarDatum,
     ChartSeries,
@@ -50,6 +58,11 @@ interface PeriodRange {
     start: Date;
     end: Date;
     days: Date[];
+}
+
+interface CachedMonth {
+    config: MonthConfig;
+    path: string | null;
 }
 
 interface PeriodStats {
@@ -146,6 +159,14 @@ function getEmptyMonthConfig(): MonthConfig {
     return { deviation: 0, daysOff: [], vacationDays: [], sickDays: [] };
 }
 
+function monthKey(date: Date): string {
+    return `${date.getFullYear()}-${date.getMonth() + 1}`;
+}
+
+function getDayOffLabel(type: DayOffType): string {
+    return DAY_OFF_TYPES.find(t => t.type === type)?.label ?? type;
+}
+
 export class StatisticsDashboardModal extends Modal {
     private plugin: TimeTrackerStatisticsPlugin;
     private api: STT_API | null = null;
@@ -154,7 +175,8 @@ export class StatisticsDashboardModal extends Modal {
     private distributionMode: DistributionMode = "category";
     private entries: TrackedEntry[] = [];
     private running: { path: string; basename: string } | null = null;
-    private monthConfigs = new Map<string, MonthConfig>();
+    private months = new Map<string, CachedMonth>();
+    private saving = false;
     private renderToken = 0;
     private loaded = false;
 
@@ -311,7 +333,7 @@ export class StatisticsDashboardModal extends Modal {
             this.running = runningPage
                 ? { path: runningPage.path, basename: runningPage.basename }
                 : null;
-            this.monthConfigs.clear();
+            this.months.clear();
             this.loaded = true;
             await this.render();
         } catch (error) {
@@ -336,34 +358,74 @@ export class StatisticsDashboardModal extends Modal {
         return (ms >= 0 ? "+" : "-") + this.format(Math.abs(ms));
     }
 
-    private async getMonthConfig(
-        year: number,
-        monthIndex: number
-    ): Promise<MonthConfig> {
-        const key = `${year}-${monthIndex}`;
-        let config = this.monthConfigs.get(key);
-        if (!config) {
-            config = await loadMonthConfig(this.app, year, monthIndex)
-                ?? getEmptyMonthConfig();
-            this.monthConfigs.set(key, config);
+    private async loadMonths(days: Date[]): Promise<void> {
+        for (const day of days) {
+            const key = monthKey(day);
+            if (this.months.has(key)) continue;
+            const note = await findMonthNote(
+                this.app,
+                day.getFullYear(),
+                day.getMonth() + 1
+            );
+            this.months.set(key, note
+                ? { config: note.config, path: note.file.path }
+                : { config: getEmptyMonthConfig(), path: null });
         }
-        return config;
     }
 
-    private async getDayTargets(days: Date[]): Promise<Map<string, number>> {
+    private getMonth(day: Date): CachedMonth {
+        return this.months.get(monthKey(day)) ??
+            { config: getEmptyMonthConfig(), path: null };
+    }
+
+    private getDayType(day: Date): DayOffType | null {
+        return getDayOffType(this.getMonth(day).config, day.getDate());
+    }
+
+    private getDayTargets(days: Date[]): Map<string, number> {
         const dailyTarget = getDailyTarget(this.plugin.settings.categories);
         const targets = new Map<string, number>();
         if (dailyTarget <= 0) return targets;
 
         for (const day of days) {
-            const year = day.getFullYear();
-            const monthIndex = day.getMonth() + 1;
-            const config = await this.getMonthConfig(year, monthIndex);
-            if (isTargetDay(year, monthIndex, day.getDate(), config)) {
+            const config = this.getMonth(day).config;
+            if (isTargetDay(
+                day.getFullYear(),
+                day.getMonth() + 1,
+                day.getDate(),
+                config
+            )) {
                 targets.set(toDateKey(day), dailyTarget);
             }
         }
         return targets;
+    }
+
+    private async setDayType(
+        day: Date,
+        dayType: DayOffType | null
+    ): Promise<void> {
+        if (this.saving) return;
+        this.saving = true;
+        try {
+            const note = await setDayOffType(
+                this.plugin,
+                day.getFullYear(),
+                day.getMonth() + 1,
+                day.getDate(),
+                dayType
+            );
+            this.months.set(monthKey(day), {
+                config: note.config,
+                path: note.file.path
+            });
+        } catch (error) {
+            console.error("Simple Time Tracker (Dashboard) Error:", error);
+            new Notice("Could not update the monthly note.");
+        } finally {
+            this.saving = false;
+        }
+        await this.render();
     }
 
     private getSeries(stats: PeriodStats): ChartSeries[] {
@@ -545,8 +607,9 @@ export class StatisticsDashboardModal extends Modal {
         this.updateToolbar(range);
         if (!this.loaded || !this.api) return;
 
-        const dayTargets = await this.getDayTargets(range.days);
+        await this.loadMonths(range.days);
         if (token !== this.renderToken) return;
+        const dayTargets = this.getDayTargets(range.days);
 
         const stats = this.computeStats(range, dayTargets);
         const series = this.getSeries(stats);
@@ -554,9 +617,11 @@ export class StatisticsDashboardModal extends Modal {
         this.tooltip.hide();
         this.bodyEl.empty();
         this.renderTiles(stats, range);
+        if (this.period === "day") this.renderDayTypeCard(range.start);
 
         const heatCard = this.createCard(this.getHeatmapTitle());
         this.renderHeatmapForPeriod(heatCard, range, stats, series);
+        if (this.period === "month") this.renderDaysOffCard(range);
 
         const grid = this.bodyEl.createDiv({ cls: "stt-grid" });
         const barCard = this.createCard(this.getBarTitle(), grid);
@@ -618,6 +683,110 @@ export class StatisticsDashboardModal extends Modal {
         }
     }
 
+    private renderNoteLink(parent: HTMLElement, day: Date): void {
+        const path = this.getMonth(day).path;
+        const hint = parent.createDiv({ cls: "stt-card-hint" });
+        if (!path) {
+            hint.setText("A monthly note will be created on the first change.");
+            return;
+        }
+        hint.createSpan({ text: "Saved in " });
+        const link = hint.createEl("a", {
+            text: path.replace(/\.md$/, ""),
+            cls: "internal-link"
+        });
+        link.addEventListener("click", () => this.openNote(path));
+    }
+
+    private renderDayTypeCard(day: Date): void {
+        const card = this.createCard("Day type");
+        const header = card.querySelector(".stt-card-header");
+        const current = this.getDayType(day);
+        if (header) {
+            const toggle = header.createDiv({ cls: "stt-toggle" });
+            const options: { type: DayOffType | null; label: string }[] = [
+                { type: null, label: "Workday" },
+                ...DAY_OFF_TYPES
+            ];
+            for (const { type, label } of options) {
+                const button = toggle.createEl("button", {
+                    text: label,
+                    cls: current === type ? "is-active" : ""
+                });
+                button.addEventListener("click", () => {
+                    if (type !== current) void this.setDayType(day, type);
+                });
+            }
+        }
+        const weekday = day.getDay();
+        if (weekday === 0 || weekday === 6) {
+            card.createDiv({
+                cls: "stt-card-hint",
+                text: "Weekends never count towards the target."
+            });
+        }
+        this.renderNoteLink(card, day);
+    }
+
+    private renderDaysOffCard(range: PeriodRange): void {
+        const card = this.createCard("Days off");
+        const marked = range.days
+            .map(day => ({ day, type: this.getDayType(day) }))
+            .filter((d): d is { day: Date; type: DayOffType } =>
+                d.type !== null);
+
+        if (marked.length === 0) {
+            renderEmpty(card, "No days off in this month.");
+        } else {
+            const list = card.createDiv({ cls: "stt-days-off" });
+            for (const { day, type } of marked) {
+                const chip = list.createDiv({ cls: "stt-day-off" });
+                const label = chip.createEl("a", {
+                    text: `${toMoment(day).format("ddd D")} · ` +
+                        getDayOffLabel(type)
+                });
+                label.addEventListener("click", () =>
+                    this.setPeriod("day", day));
+                const remove = chip.createEl("button", {
+                    cls: "clickable-icon",
+                    attr: { "aria-label": "Remove" }
+                });
+                setIcon(remove, "x");
+                remove.addEventListener("click", () => {
+                    void this.setDayType(day, null);
+                });
+            }
+        }
+
+        const form = card.createDiv({ cls: "stt-day-off-form" });
+        const daySelect = form.createEl("select", { cls: "dropdown" });
+        for (const day of range.days) {
+            daySelect.createEl("option", {
+                text: toMoment(day).format("ddd D"),
+                value: String(day.getDate())
+            });
+        }
+        const today = new Date();
+        if (monthKey(today) === monthKey(range.start)) {
+            daySelect.value = String(today.getDate());
+        }
+        const typeSelect = form.createEl("select", { cls: "dropdown" });
+        for (const { type, label } of DAY_OFF_TYPES) {
+            typeSelect.createEl("option", { text: label, value: type });
+        }
+        const add = form.createEl("button", { text: "Add", cls: "mod-cta" });
+        add.addEventListener("click", () => {
+            const day = new Date(
+                range.start.getFullYear(),
+                range.start.getMonth(),
+                Number(daySelect.value)
+            );
+            void this.setDayType(day, typeSelect.value as DayOffType);
+        });
+
+        this.renderNoteLink(card, range.start);
+    }
+
     private getHeatmapTitle(): string {
         switch (this.period) {
             case "year": return "Daily activity";
@@ -672,12 +841,15 @@ export class StatisticsDashboardModal extends Modal {
                 const week = Math.floor(index / 7);
                 const weekday = index % 7;
                 const isYear = this.period === "year";
+                const dayType = this.getDayType(day);
                 return {
                     row: isYear ? weekday : week,
                     col: isYear ? week : weekday,
                     value: this.dayTotal(stats, toDateKey(day)),
                     title: toMoment(day).format("ddd, D MMM YYYY"),
                     text: isYear ? undefined : String(day.getDate()),
+                    detail: dayType ? getDayOffLabel(dayType) : undefined,
+                    marked: dayType !== null,
                     onClick: () => this.setPeriod("day", day)
                 };
             });

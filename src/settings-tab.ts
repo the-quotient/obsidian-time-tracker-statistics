@@ -109,5 +109,19 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     });
             });
+
+        new SafeSettingClass(container)
+            .setName('Monthly notes folder')
+            .setDesc('Folder where new monthly notes (e.g. 2026-10.md) are ' +
+                'created when you mark days off in the dashboard. Existing ' +
+                'monthly notes are found anywhere in the vault.')
+            .addText((text: TextComponent) => {
+                text.setPlaceholder("Vault root")
+                    .setValue(this.plugin.settings.monthlyNotesFolder)
+                    .onChange(async (value: string) => {
+                        this.plugin.settings.monthlyNotesFolder = value.trim();
+                        await this.plugin.saveSettings();
+                    });
+            });
     }
 }

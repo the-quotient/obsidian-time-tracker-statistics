@@ -7,10 +7,12 @@ export interface Category {
 export interface TimeTrackerStatisticsSettings {
     firstDayOfWeek: number;
     categories: Category[];
+    monthlyNotesFolder: string;
 }
 
 export const defaultSettings: TimeTrackerStatisticsSettings = {
     firstDayOfWeek: 1, //Monday
+    monthlyNotesFolder: "",
     categories: [
         {
             name: "Work",
