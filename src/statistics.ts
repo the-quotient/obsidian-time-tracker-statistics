@@ -16,7 +16,11 @@ interface STTMoment {
     isSameOrAfter(m: STTMoment): boolean;
     isSameOrBefore(m: STTMoment): boolean;
     format(fmt: string): string;
+    isValid(): boolean;
+    clone(): STTMoment;
+    locale(locale: string): STTMoment;
     isoWeek(): number;
+    isoWeekday(): number;
     week(): number;
     day(): number;
 }
@@ -63,7 +67,7 @@ interface SafeVault {
 export interface Entry {
     id: string;
     name: string;
-    startTime: string;
+    startTime: string | null;
     endTime: string | null;
     subEntries: Entry[];
 }
@@ -123,9 +127,25 @@ function extractDate(input: string): string | null {
     return match ? match[0] : null;
 }
 
+function getLocalDateKey(timestamp: string | null): string | null {
+    if (!timestamp) return null;
+    const time = safeMoment(timestamp);
+    return time.isValid() ? time.format("YYYY-MM-DD") : null;
+}
+
 function parseTargetTime(target: string): number {
     if (!target) return 0;
     return safeMoment.duration(target).asMilliseconds();
+}
+
+function isWorkCategory(category: Category): boolean {
+    return parseTargetTime(category.target) > 0;
+}
+
+function getDailyTarget(categories: Category[]): number {
+    return categories
+        .filter(isWorkCategory)
+        .reduce((total, c) => total + parseTargetTime(c.target), 0);
 }
 
 function extractYear(inputString: string): number | null {
@@ -136,6 +156,13 @@ function extractYear(inputString: string): number | null {
 function extractMonth(inputString: string): number | null {
     const monthMatch = String(inputString).match(/\b-\d{2}\b/);
     return monthMatch ? Number(monthMatch[0].replace("-", "")) : null;
+}
+
+function parseDayList(value: unknown): number[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter(
+        (day): day is number => typeof day === "number" && Number.isInteger(day)
+    );
 }
 
 function escapeMarkdown(text: string): string {
@@ -152,15 +179,49 @@ function createEmptyResult(): WorkingTimeResult {
     };
 }
 
-async function getWorkingTimeMap(
+interface PageTrackers {
+    path: string;
+    basename: string;
+    tags: string[];
+    trackers: Tracker[];
+}
+
+async function loadPageTrackers(
     dataviewApi: MinimalDataviewApi,
+    app: App,
+    api: STT_API
+): Promise<PageTrackers[]> {
+    const vault = app.vault as unknown as SafeVault;
+    const result: PageTrackers[] = [];
+
+    for (const page of dataviewApi.pages('""')) {
+        if (!page.file?.path) continue;
+
+        const filePath = page.file.path;
+        const file = vault.getAbstractFileByPath(filePath);
+
+        if (!file || typeof file.basename !== "string") {
+            continue;
+        }
+
+        const trackers = await api.loadAllTrackers(filePath);
+        result.push({
+            path: filePath,
+            basename: file.basename,
+            tags: page.file.tags ?? [],
+            trackers: trackers.map(({ tracker }) => tracker)
+        });
+    }
+    return result;
+}
+
+function getWorkingTimeMap(
+    pages: PageTrackers[],
     plugin: TimeTrackerStatisticsPlugin,
+    api: STT_API,
     startDate: string,
     endDate: string
-): Promise<Map<string, WorkingTimeResult>> {
-    const api = getSTTApi(plugin.app);
-    if (!api) throw new Error("Simple time tracker API not found");
-
+): Map<string, WorkingTimeResult> {
     const resultMap = new Map<string, WorkingTimeResult>();
     const startMoment = safeMoment(startDate);
     const endMoment = safeMoment(endDate);
@@ -173,7 +234,7 @@ async function getWorkingTimeMap(
         parentName = ''
     ) {
         entries.forEach(entry => {
-            const dateStr = extractDate(entry.startTime);
+            const dateStr = getLocalDateKey(entry.startTime);
 
             if (dateStr) {
                 const entryDate = safeMoment(dateStr);
@@ -216,19 +277,8 @@ async function getWorkingTimeMap(
         });
     }
 
-    for (const page of dataviewApi.pages('""')) {
-        if (!page.file?.path) continue;
-
-        const filePath = page.file.path;
-        const vault = plugin.app.vault as unknown as SafeVault;
-        const file = vault.getAbstractFileByPath(filePath);
-
-        if (!file || typeof file.basename !== "string") {
-            continue;
-        }
-
-        const trackers = await api.loadAllTrackers(filePath);
-        const pageTags = new Set(page.file.tags ?? []);
+    for (const { basename, tags, trackers } of pages) {
+        const pageTags = new Set(tags);
 
         let category = "Other";
         for (const cat of plugin.settings.categories) {
@@ -238,32 +288,22 @@ async function getWorkingTimeMap(
             }
         }
 
-        for (const { tracker } of trackers) {
-            processEntries(tracker.entries, file.basename, category, api);
+        for (const tracker of trackers) {
+            processEntries(tracker.entries, basename, category, api);
         }
     }
 
     return resultMap;
 }
 
-async function getRunningTrackerMarkdown(
-    dataviewApi: MinimalDataviewApi,
-    app: App
-): Promise<string> {
-    const api = getSTTApi(app);
-    if (!api) return "";
-
-    for (const page of dataviewApi.pages('""')) {
-        if (!page.file?.path) continue;
-
-        const filePath = page.file.path;
-        const trackers = await api.loadAllTrackers(filePath);
-        for (const { tracker } of trackers) {
-            if (api.isRunning(tracker)) {
-                const name = page.file.name ?? 'Untitled';
-                return `**Currently running:** [[${filePath}|${name}]]\n` +
-                    `\n---\n`;
-            }
+function getRunningTrackerMarkdown(
+    pages: PageTrackers[],
+    api: STT_API
+): string {
+    for (const { path, basename, trackers } of pages) {
+        if (trackers.some(tracker => api.isRunning(tracker))) {
+            return `**Currently running:** [[${path}|${basename}]]\n` +
+                `\n---\n`;
         }
     }
     return "_No tracker is currently running._\n";
@@ -273,7 +313,6 @@ export function displayStatisticsDay(
     container: HTMLElement,
     plugin: TimeTrackerStatisticsPlugin,
     sourcePath: string,
-    _blockContent: string | undefined,
     component: Component
 ): void {
     const cont = container as ObsidianHTMLElement;
@@ -319,14 +358,13 @@ export function displayStatisticsDay(
 
         try {
             contentContainer.innerHTML = "";
-            const runningTrackerMd = await getRunningTrackerMarkdown(
-                dataviewApi,
-                app
-            );
+            const pages = await loadPageTrackers(dataviewApi, app, api);
+            const runningTrackerMd = getRunningTrackerMarkdown(pages, api);
 
-            const resultMap = await getWorkingTimeMap(
-                dataviewApi,
+            const resultMap = getWorkingTimeMap(
+                pages,
                 plugin,
+                api,
                 date,
                 date
             );
@@ -346,7 +384,7 @@ export function displayStatisticsDay(
                 });
 
                 const showTargetColumns = plugin.settings.categories.some(
-                    (c: Category) => c.target
+                    isWorkCategory
                 );
 
                 let totalsTable = `| Category | Duration |`;
@@ -510,12 +548,9 @@ export function displayStatisticsMonth(
 
         const deviation = typeof settings.deviation === 'number'
             ? settings.deviation : 0;
-        const daysOff = Array.isArray(settings.daysOff)
-            ? (settings.daysOff as number[]) : [];
-        const vacationDays = Array.isArray(settings.vacationDays)
-            ? (settings.vacationDays as number[]) : [];
-        const sickDays = Array.isArray(settings.sickDays)
-            ? (settings.sickDays as number[]) : [];
+        const daysOff = parseDayList(settings.daysOff);
+        const vacationDays = parseDayList(settings.vacationDays);
+        const sickDays = parseDayList(settings.sickDays);
 
         const vault = app.vault as unknown as SafeVault;
         const sourceFile = vault.getAbstractFileByPath(sourcePath);
@@ -552,6 +587,7 @@ export function displayStatisticsMonth(
                 daysOff,
                 vacationDays,
                 sickDays,
+                sourcePath,
                 component
             );
         } catch (error) {
@@ -604,6 +640,7 @@ async function printWorkingTimeOfMonth(
     daysOff: number[],
     vacationDays: number[],
     sickDays: number[],
+    sourcePath: string,
     component: Component
 ) {
     const monthLookupTable: { name: string, days: number }[] = [
@@ -615,7 +652,7 @@ async function printWorkingTimeOfMonth(
         { name: "November", days: 30 }, { name: "December", days: 31 }
     ];
 
-    const HOURS_PER_DAY_OFF = 8 * 60 * 60 * 1000;
+    const dailyTarget = getDailyTarget(plugin.settings.categories);
     const allDaysOff = new Set([...daysOff, ...vacationDays, ...sickDays]);
 
     const isLeapYear = (y: number) => {
@@ -645,9 +682,11 @@ async function printWorkingTimeOfMonth(
     const startDate = `${year}-${monthStr}-01`;
     const endDate = `${year}-${monthStr}-${lastDayStr}`;
 
-    const monthlyDataMap = await getWorkingTimeMap(
-        dataviewApi,
+    const pages = await loadPageTrackers(dataviewApi, plugin.app, api);
+    const monthlyDataMap = getWorkingTimeMap(
+        pages,
         plugin,
+        api,
         startDate,
         endDate
     );
@@ -655,8 +694,8 @@ async function printWorkingTimeOfMonth(
     let weekRows: string[][] = [];
     let weeklyWorkTotal = 0;
     let weeklyOtherTotal = 0;
+    let weeklyTarget = 0;
     let accumulatedDeviation = deviation;
-    let weekStartDay = 1;
 
     const endOfWeekIndex = plugin.settings.firstDayOfWeek === 1 ? 0 : 6;
 
@@ -669,7 +708,7 @@ async function printWorkingTimeOfMonth(
         });
         const dayOfWeek = currentMoment.format("dd");
 
-        let weekNumber = currentMoment.week();
+        let weekNumber = currentMoment.clone().locale("en").week();
         if (plugin.settings.firstDayOfWeek === 1) {
             weekNumber = currentMoment.isoWeek();
         }
@@ -681,9 +720,11 @@ async function printWorkingTimeOfMonth(
 
         if (workingTime) {
             workingTime.fileCategories.forEach((category, index) => {
-                const isWorkCat = (c: Category) => c.name === category;
-                const isWork = plugin.settings.categories
-                    .find(isWorkCat)?.tags.includes("#work");
+                const isName = (c: Category) => c.name === category;
+                const categorySettings = plugin.settings.categories
+                    .find(isName);
+                const isWork = categorySettings
+                    ? isWorkCategory(categorySettings) : false;
                 const duration = workingTime.entryDurations[index] || 0;
 
                 if (isWork) {
@@ -696,6 +737,11 @@ async function printWorkingTimeOfMonth(
 
         weeklyWorkTotal += workDuration;
         weeklyOtherTotal += otherDuration;
+
+        const isWeekday = currentMoment.isoWeekday() <= 5;
+        if (isWeekday && !allDaysOff.has(day)) {
+            weeklyTarget += dailyTarget;
+        }
 
         let dayLabel = `${day} (${dayOfWeek})`;
         if (daysOff.includes(day)) {
@@ -717,12 +763,6 @@ async function printWorkingTimeOfMonth(
         const isLastDayOfMonth = day === monthDetails.days;
 
         if (dayOfWeekIndex === endOfWeekIndex || isLastDayOfMonth) {
-            const targetTimeForWeek = calculateTargetTime(
-                weekStartDay,
-                day,
-                allDaysOff,
-                HOURS_PER_DAY_OFF
-            );
             accumulatedDeviation = renderWeekTableWithApp(
                 plugin.app,
                 container,
@@ -730,15 +770,16 @@ async function printWorkingTimeOfMonth(
                 weekRows,
                 weeklyWorkTotal,
                 weeklyOtherTotal,
-                targetTimeForWeek,
+                weeklyTarget,
                 accumulatedDeviation,
                 weekNumber,
+                sourcePath,
                 component
             );
             weeklyWorkTotal = 0;
             weeklyOtherTotal = 0;
+            weeklyTarget = 0;
             weekRows = [];
-            weekStartDay = day + 1;
         }
     }
 
@@ -751,6 +792,7 @@ async function printWorkingTimeOfMonth(
         daysOff,
         vacationDays,
         sickDays,
+        sourcePath,
         component,
         monthlyDataMap
     );
@@ -764,6 +806,7 @@ function renderEndOfMonthSummary(
     daysOff: number[],
     vacationDays: number[],
     sickDays: number[],
+    sourcePath: string,
     component: Component,
     monthlyDataMap: Map<string, WorkingTimeResult>
 ) {
@@ -803,23 +846,13 @@ function renderEndOfMonthSummary(
 
     table += breakdownTable;
 
-    void safeRenderer.render(app, table, container, "", component);
-}
-
-function calculateTargetTime(
-    weekStartDay: number,
-    weekEndDay: number,
-    daysOff: Set<number>,
-    HOURS_PER_DAY_OFF: number
-): number {
-    const daysInWeek = weekEndDay - weekStartDay + 1;
-    let totalTarget = daysInWeek * 8 * 60 * 60 * 1000;
-    daysOff.forEach(day => {
-        if (day >= weekStartDay && day <= weekEndDay) {
-            totalTarget -= HOURS_PER_DAY_OFF;
-        }
-    });
-    return totalTarget;
+    void safeRenderer.render(
+        app,
+        table,
+        container.createDiv(),
+        sourcePath,
+        component
+    );
 }
 
 function renderWeekTableWithApp(
@@ -832,6 +865,7 @@ function renderWeekTableWithApp(
     targetTimeForWeek: number,
     accumulatedDeviation: number,
     weekNumber: number,
+    sourcePath: string,
     component: Component
 ): number {
     container.createEl("h5", { text: `Week ${weekNumber}` });
@@ -869,7 +903,13 @@ function renderWeekTableWithApp(
     table += `| **Accumulated deviation** | **${accDeviationFormatted}** `;
     table += `|  |  |\n`;
 
-    void safeRenderer.render(app, table, container, "", component);
+    void safeRenderer.render(
+        app,
+        table,
+        container.createDiv(),
+        sourcePath,
+        component
+    );
     return accumulatedDeviation;
 }
 

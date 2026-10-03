@@ -1,14 +1,14 @@
 # Obsidian Time Tracker Statistics
 
 This is a statistics companion plugin for the **[Super Simple Time Tracker](https://github.com/Ellpeck/ObsidianSimpleTimeTracker)** by [Ellpeck](https://github.com/Ellpeck).
-It provides high-level visualisations for your time tracking data across your entire vault using the Dataview API.
+It collects the time tracked in all notes of your vault and summarises it in daily and monthly reports: time per category, per entry and per note, compared against your daily targets.
 
-- Visualises tracked time without the need for custom API scripts or coding.
+- Summarises tracked time without the need for custom scripts or coding.
 - Identifies the relevant data based on the file's name.
     - **Daily**: Requires a `YYYY-MM-DD` format (e.g., `2026-02-01.md`).
     - **Monthly**: Requires a year and month index (e.g., `2026-02.md`).
 - Automatically groups tracked entries into categories based on file tags defined in your settings.
-- You can add a target time for a category and the breakdown will show you how much you deviated from it. You can very easily mark weekends, public holidays, vacation days and sick days and the deviation calculation will take this into account.
+- You can add a target time for a category and the breakdown will show you how much you deviated from it. Weekends are excluded from the target automatically, and you can easily mark public holidays, vacation days and sick days so the deviation calculation takes them into account.
 - The Daily view displays whether a tracker is currently running anywhere in your vault.
 
 ## Different Views
@@ -16,7 +16,7 @@ It provides high-level visualisations for your time tracking data across your en
 ### 1. Daily Statistics
 
 Provides a summary of all time tracked for a specific calendar day.
-- **Command**: `Insert time tracker statistics day`.
+- **Command**: `Insert daily statistics`.
 - **Code Block**: `simple-time-tracker-statistics-day`.
 
 **Includes:**
@@ -25,13 +25,15 @@ Provides a summary of all time tracked for a specific calendar day.
 - **Entries Breakdown**: A detailed list of every entry, showing the source file and sub-entry hierarchy.
 - **Running Tracker**: Displays a link to any active tracker found in the vault.
 
+Entries are assigned to the day on which they were started, in your local time zone.
+
 <img width="774" height="670" alt="image" src="https://github.com/user-attachments/assets/3d78b2a8-9c71-4db9-a0ae-475aa3d85213" />
 
 ### 2. Monthly Statistics
 
 A comprehensive report grouping entries by week and calculating long-term time balances.
 
-- **Command**: `Insert time tracker statistics month`.
+- **Command**: `Insert monthly statistics`.
 - **Code Block**: `simple-time-tracker-statistics-month`.
 
 <img width="857" height="578" alt="image" src="https://github.com/user-attachments/assets/9e690e5d-b395-4c4f-b52d-c334f3fe6e6f" />
@@ -39,7 +41,7 @@ A comprehensive report grouping entries by week and calculating long-term time b
 
 ## Managing Time Off
 
-The Monthly view allows you to exclude specific days from your standard work obligations to keep your **Accumulated Deviation** accurate.
+The Monthly view counts the daily work target for Monday to Friday only. Saturdays and Sundays never add to the target. You can exclude further days from your standard work obligations to keep your **Accumulated Deviation** accurate.
 
 ### Configuration Parameters
 
@@ -47,10 +49,10 @@ Adjust these values directly within the code block:
 
 |Parameter|Type|Description|
 |---|---|---|
-|**`deviation`**|`number`|Time (in **milliseconds**) to carry over from a previous month.|
+|**`deviation`**|`number`|Time (in **milliseconds**) to carry over from a previous month. Copy it from the *Total accumulated deviation (ms)* row of the previous month's summary.|
 |**`vacationDays`**|`number[]`|Days of the month to be excluded from work targets (e.g., `[1, 2, 3]`).|
 |**`sickDays`**|`number[]`|Dates marked as sick leave; reduces the work target.|
-|**`daysOff`**|`number[]`|General non-working days (e.g. weekends) or public holidays.|
+|**`daysOff`**|`number[]`|Public holidays or other non-working days. Weekends don't need to be listed.|
 
 ## Setting Up Categories
 
@@ -59,7 +61,7 @@ To make the statistics meaningful, map your vault's tags to categories in the **
 1. **Define a Category**: Give it a name.
 2. **Assign Tags**: Add the tags you use to indicate the files associated with the category. By default, **Work** looks for `#work` and **Leisure** looks for `#leisure`.
 3. **Set Targets**: Enter a daily target in `HH:mm:ss` format. If left blank, the target defaults to `00:00:00`.
-4. **Monthly "Work" Tracking**: **Note:** For the Monthly view to calculate deviation, the plugin specifically identifies "Work" by checking for the `#work` tag within a category. Ensure your primary work category includes this tag.
+4. **Monthly "Work" Tracking**: Every category with a target above `00:00:00` counts as work in the Monthly view. The daily target is the sum of these targets. Categories without a target are shown as "Other duration".
 
 ## Prerequisites
 
@@ -69,4 +71,4 @@ To make the statistics meaningful, map your vault's tags to categories in the **
 ## Roadmap
 
 - Automate the carry-over of deviation values between months.
-- Add yearly summaries. Add yearly summaries.
+- Add yearly summaries.

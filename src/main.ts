@@ -32,7 +32,6 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
                     el,
                     this,
                     ctx.sourcePath,
-                    source,
                     component
                 );
 
@@ -63,8 +62,8 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
         );
 
         this.addCommand({
-            id: `insert-stats-day`,
-            name: `Insert time tracker statistics day`,
+            id: "insert-stats-day",
+            name: "Insert daily statistics",
             editorCallback: (editor: Editor) => {
                 const block = "```simple-time-tracker-statistics-day\n```\n";
                 editor.replaceSelection(block);
@@ -72,8 +71,8 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
         });
 
         this.addCommand({
-            id: `insert-stats-month`,
-            name: `Insert time tracker statistics month`,
+            id: "insert-stats-month",
+            name: "Insert monthly statistics",
             editorCallback: (editor: Editor) => {
                 const block = "```simple-time-tracker-statistics-month\n" +
                     "deviation = 0\n" +
@@ -90,6 +89,12 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
         this.settings = Object.assign(
             {},
             defaultSettings,
+            {
+                categories: defaultSettings.categories.map(category => ({
+                    ...category,
+                    tags: [...category.tags]
+                }))
+            },
             (await this.loadData()) as TimeTrackerStatisticsSettings
         );
     }
