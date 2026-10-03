@@ -6,7 +6,12 @@ import {
 } from "obsidian";
 import { defaultSettings, TimeTrackerStatisticsSettings } from "./settings";
 import { TimeTrackerStatisticsSettingsTab } from "./settings-tab";
-import { displayStatisticsDay, displayStatisticsMonth } from "./statistics";
+import {
+    displayStatisticsDay,
+    displayStatisticsWeek,
+    displayStatisticsMonth,
+    displayStatisticsYear
+} from "./statistics";
 import { PERIODS, PeriodType, StatisticsDashboardModal } from "./dashboard";
 
 export default class TimeTrackerStatisticsPlugin extends Plugin {
@@ -30,6 +35,48 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
                 const component = new MarkdownRenderChild(el);
 
                 displayStatisticsDay(
+                    el,
+                    this,
+                    ctx.sourcePath,
+                    component
+                );
+
+                ctx.addChild(component);
+            }
+        );
+
+        this.registerMarkdownCodeBlockProcessor(
+            "simple-time-tracker-statistics-week",
+            (
+                source: string,
+                el: HTMLElement,
+                ctx: MarkdownPostProcessorContext
+            ) => {
+                el.innerHTML = "";
+                const component = new MarkdownRenderChild(el);
+
+                displayStatisticsWeek(
+                    el,
+                    this,
+                    ctx.sourcePath,
+                    component
+                );
+
+                ctx.addChild(component);
+            }
+        );
+
+        this.registerMarkdownCodeBlockProcessor(
+            "simple-time-tracker-statistics-year",
+            (
+                source: string,
+                el: HTMLElement,
+                ctx: MarkdownPostProcessorContext
+            ) => {
+                el.innerHTML = "";
+                const component = new MarkdownRenderChild(el);
+
+                displayStatisticsYear(
                     el,
                     this,
                     ctx.sourcePath,
@@ -92,6 +139,24 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: "insert-stats-week",
+            name: "Insert weekly statistics",
+            editorCallback: (editor: Editor) => {
+                const block = "```simple-time-tracker-statistics-week\n```\n";
+                editor.replaceSelection(block);
+            }
+        });
+
+        this.addCommand({
+            id: "insert-stats-year",
+            name: "Insert yearly statistics",
+            editorCallback: (editor: Editor) => {
+                const block = "```simple-time-tracker-statistics-year\n```\n";
+                editor.replaceSelection(block);
+            }
+        });
+
+        this.addCommand({
             id: "insert-stats-month",
             name: "Insert monthly statistics",
             editorCallback: (editor: Editor) => {
@@ -106,8 +171,8 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
         });
     }
 
-    openDashboard(period?: PeriodType): void {
-        new StatisticsDashboardModal(this.app, this, period).open();
+    openDashboard(period?: PeriodType, anchor?: Date): void {
+        new StatisticsDashboardModal(this.app, this, period, anchor).open();
     }
 
     async loadSettings(): Promise<void> {

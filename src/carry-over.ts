@@ -193,6 +193,9 @@ function computeMonthDeviation(
     if (!details) return startDeviation;
 
     const dailyTarget = getDailyTarget(categories);
+    const now = new Date();
+    const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-` +
+        pad(now.getDate());
     let deviation = startDeviation;
 
     for (let day = 1; day <= details.days; day++) {
@@ -202,7 +205,8 @@ function computeMonthDeviation(
             categories
         );
         deviation += workDuration;
-        if (isTargetDay(year, monthIndex, day, config)) {
+        if (isTargetDay(year, monthIndex, day, config) &&
+            dateKey <= todayKey) {
             deviation -= dailyTarget;
         }
     }

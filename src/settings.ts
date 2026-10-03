@@ -8,11 +8,13 @@ export interface TimeTrackerStatisticsSettings {
     firstDayOfWeek: number;
     categories: Category[];
     monthlyNotesFolder: string;
+    showChartsInNotes: boolean;
 }
 
 export const defaultSettings: TimeTrackerStatisticsSettings = {
     firstDayOfWeek: 1, //Monday
     monthlyNotesFolder: "",
+    showChartsInNotes: false,
     categories: [
         {
             name: "Work",

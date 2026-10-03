@@ -1,44 +1,95 @@
 # Obsidian Time Tracker Statistics
 
 This is a statistics companion plugin for the **[Super Simple Time Tracker](https://github.com/Ellpeck/ObsidianSimpleTimeTracker)** by [Ellpeck](https://github.com/Ellpeck).
-It collects the time tracked in all notes of your vault and summarises it in daily and monthly reports: time per category, per entry and per note, compared against your daily targets.
+It collects the time tracked in all notes of your vault and summarises it in daily, weekly, monthly and yearly reports: time per category, per entry and per note, compared against your daily targets. An interactive dashboard shows the same data as charts.
 
 - Summarises tracked time without the need for custom scripts or coding.
-- Identifies the relevant data based on the file's name.
-    - **Daily**: Requires a `YYYY-MM-DD` format (e.g., `2026-02-01.md`).
-    - **Monthly**: Requires a year and month index (e.g., `2026-02.md`).
+- Identifies the relevant period from the name of the note that contains the code block:
+    - **Daily**: `YYYY-MM-DD` (e.g., `2026-02-01.md`).
+    - **Weekly**: `YYYY-Www` (e.g., `2026-W05.md`).
+    - **Monthly**: `YYYY-MM` (e.g., `2026-02.md`).
+    - **Yearly**: `YYYY` (e.g., `2026.md`).
 - Automatically groups tracked entries into categories based on file tags defined in your settings.
-- You can add a target time for a category and the breakdown will show you how much you deviated from it. Weekends are excluded from the target automatically, and you can easily mark public holidays, vacation days and sick days so the deviation calculation takes them into account.
-- The Daily view displays whether a tracker is currently running anywhere in your vault.
+- You can add a target time for a category and the reports will show you how much you deviated from it. Weekends are excluded from the target automatically, and you can mark public holidays, vacation days and sick days, either in the dashboard or in the monthly note, so the deviation calculation takes them into account.
+- Optionally shows the dashboard charts below the tables in your notes.
 
 ## Different Views
+
+All code blocks have a refresh button next to their title. Entries are assigned to the day on which they were started, in your local time zone.
+
+Targets are only counted **up to today**, so the deviation of the current week, month or year shows where you stand right now instead of counting days that haven't happened yet.
 
 ### 1. Daily Statistics
 
 Provides a summary of all time tracked for a specific calendar day.
+
 - **Command**: `Insert daily statistics`.
 - **Code Block**: `simple-time-tracker-statistics-day`.
 
 **Includes:**
 
-- **Totals Table**: Breakdown of duration, remaining time, and overtime per category based on your set targets.
-- **Entries Breakdown**: A detailed list of every entry, showing the source file and sub-entry hierarchy.
 - **Running Tracker**: Displays a link to any active tracker found in the vault.
+- **Totals Table**: Duration, remaining time and overtime per category based on your set targets. On weekends and on days marked as off, vacation or sick, there is no target, so all work time counts as overtime.
+- **Entries Breakdown**: A detailed list of every entry, showing the source file and sub-entry hierarchy.
 
-Entries are assigned to the day on which they were started, in your local time zone.
+<img width="774" alt="Daily statistics code block" src="docs/images/note-day.png" />
 
-<img width="774" height="670" alt="image" src="https://github.com/user-attachments/assets/3d78b2a8-9c71-4db9-a0ae-475aa3d85213" />
+### 2. Weekly Statistics
 
-### 2. Monthly Statistics
+All days of one week with their work time, other time and entries.
+
+- **Command**: `Insert weekly statistics`.
+- **Code Block**: `simple-time-tracker-statistics-week`.
+
+**Includes:**
+
+- **Week Table**: One row per day, marked days off included, with the weekly total and deviation.
+- **Notes**: The time per note in that week.
+
+Weeks are numbered according to the *First day of week* setting: ISO weeks (week 1 contains 4 January) when weeks start on Monday, US weeks (week 1 contains 1 January) when they start on Sunday.
+
+<img width="857" alt="Weekly statistics code block" src="docs/images/note-week.png" />
+
+### 3. Monthly Statistics
 
 A comprehensive report grouping entries by week and calculating long-term time balances.
 
 - **Command**: `Insert monthly statistics`.
 - **Code Block**: `simple-time-tracker-statistics-month`.
 
-<img width="857" height="578" alt="image" src="https://github.com/user-attachments/assets/9e690e5d-b395-4c4f-b52d-c334f3fe6e6f" />
+**Includes:**
 
-### 3. Statistics Dashboard
+- **Carry-Over**: The deviation carried over from the previous month (see [Automatic Carry-Over](#automatic-carry-over)).
+- **Week Tables**: One table per week with the weekly deviation and the accumulated deviation of the month.
+- **End of Month Summary**: The total accumulated deviation, the number of days off, vacation and sick days, and the time per note.
+
+The monthly note also stores your days off, see [Managing Time Off](#managing-time-off).
+
+<img width="857" alt="First week of the monthly statistics code block" src="docs/images/note-month.png" />
+
+### 4. Yearly Statistics
+
+An overview of the whole year, one row per month.
+
+- **Command**: `Insert yearly statistics`.
+- **Code Block**: `simple-time-tracker-statistics-year`.
+
+**Includes:**
+
+- **Month Table**: Work time, other time, target, deviation and the number of days off, vacation and sick days per month, with a link to each monthly note.
+- **Notes**: The time per note in that year.
+
+The yearly deviation covers that year only. The monthly notes carry the balance over from one year to the next.
+
+<img width="857" alt="Yearly statistics code block" src="docs/images/note-year.png" />
+
+### Charts in Notes
+
+Turn on **Show charts in notes** in the settings to add the dashboard charts (heatmap, bar chart and distribution) below the tables of every code block. The tables stay at the top. Clicking a day or month in a chart opens it in the dashboard. The option is off by default.
+
+<img width="857" alt="Charts below the monthly statistics code block" src="docs/images/note-charts.png" />
+
+### 5. Statistics Dashboard
 
 A popup window with interactive charts for the whole vault. It works independently of any note, so you can use it alongside the code blocks or instead of them.
 
@@ -48,12 +99,13 @@ A popup window with interactive charts for the whole vault. It works independent
 **Each view includes:**
 
 - **Summary tiles**: Total tracked time, work time, target, deviation, active days and daily average. For the current period, target and deviation are counted up to today.
-- **Heatmap**: A calendar of daily totals (Year, Month), or the time tracked per hour (Week: per day, Day: per category).
+- **Heatmap**: A calendar of daily totals (Year, Month), or the time tracked per hour (Week: per day, Day: per category). Days off are outlined.
 - **Bar chart**: Time per month, day or hour, stacked by category, with the daily target marked.
 - **Distribution**: A donut chart of the tracked time by category or by note.
 - **Table**: Time per note, or every entry of the day in the Day view.
+- **Days off**: Mark a day as workday, day off, vacation or sick in the Day view, or add and remove days off in the Month view (see [Managing Time Off](#managing-time-off)).
 
-Click a day in a heatmap or bar chart to open it in the Day view, or a month bar in the Year view to open that month. Targets respect the vacation, sick and off days set in the monthly notes. Hourly charts split entries by clock time, so an entry that runs past midnight appears on both days.
+Click a day in a heatmap or bar chart to open it in the Day view, or a month bar in the Year view to open that month. Hourly charts split entries by clock time, so an entry that runs past midnight appears on both days.
 
 #### Day view
 
@@ -79,17 +131,22 @@ A contribution-style heatmap of the whole year and the time per month against th
 
 <img width="1100" alt="Year view of the statistics dashboard" src="docs/images/dashboard-year.png" />
 
-#### Dark mode and distribution by note
+#### Distribution by note
 
-<img width="1100" alt="Month view in dark mode with the distribution by note" src="docs/images/dashboard-month-dark.png" />
+<img width="1100" alt="Month view with the distribution by note" src="docs/images/dashboard-month-notes.png" />
 
 ## Managing Time Off
 
-The Monthly view counts the daily work target for Monday to Friday only. Saturdays and Sundays never add to the target. You can exclude further days from your standard work obligations to keep your **Accumulated Deviation** accurate.
+The daily work target only applies from Monday to Friday. Saturdays and Sundays never add to the target. You can exclude further days from your standard work obligations to keep your deviation accurate.
+
+Days off are stored in the code block of the **monthly note** (`YYYY-MM.md`) and apply to all views: the daily, weekly, monthly and yearly code blocks as well as the dashboard. There are two ways to set them:
+
+- **In the dashboard**: Use the *Day type* card in the Day view or the *Days off* card in the Month view. The change is written to the monthly note right away. If the month has no note yet, one is created in the **Monthly notes folder** set in the settings, with `deviation = auto`.
+- **In the code block**: Edit the lists of the monthly statistics block directly.
+
+A day can only have one type. Setting a new type replaces the old one.
 
 ### Configuration Parameters
-
-Adjust these values directly within the code block:
 
 |Parameter|Type|Description|
 |---|---|---|
@@ -100,26 +157,32 @@ Adjust these values directly within the code block:
 
 ### Automatic Carry-Over
 
-With `deviation = auto` (the default for newly inserted blocks), the plugin looks for the previous month's note by its file name (e.g. `2026-09.md` for `2026-10.md`) and uses that month's total accumulated deviation as the starting value. The link to the source note is shown above the first week.
+With `deviation = auto` (the default for newly inserted blocks and for notes created by the dashboard), the plugin looks for the previous month's note by its file name (e.g. `2026-09.md` for `2026-10.md`) and uses that month's total accumulated deviation as the starting value. The link to the source note is shown above the first week.
 
 - If the previous note also uses `auto`, the plugin keeps going back month by month.
 - The chain stops at the first note with a numeric `deviation`, or at the first month without a note (which counts as `0`).
 - Past months are recalculated with your **current** category targets. If your targets changed, set a numeric `deviation` in the first month with the new targets to freeze the earlier values.
 
-## Setting Up Categories
+## Settings
 
-To make the statistics meaningful, map your vault's tags to categories in the **Plugin Settings**. The plugin comes pre-configured with two default categories: **Work** (target `08:00:00`) and **Leisure** (target `00:00:00`).
+### Categories
+
+To make the statistics meaningful, map your vault's tags to categories. The plugin comes pre-configured with two default categories: **Work** (target `08:00:00`) and **Leisure** (target `00:00:00`).
 
 1. **Define a Category**: Give it a name.
-2. **Assign Tags**: Add the tags you use to indicate the files associated with the category. By default, **Work** looks for `#work` and **Leisure** looks for `#leisure`.
+2. **Assign Tags**: Add the tags you use to indicate the files associated with the category. By default, **Work** looks for `#work` and **Leisure** looks for `#leisure`. Notes without a matching tag are grouped as **Other**.
 3. **Set Targets**: Enter a daily target in `HH:mm:ss` format. If left blank, the target defaults to `00:00:00`.
-4. **Monthly "Work" Tracking**: Every category with a target above `00:00:00` counts as work in the Monthly view. The daily target is the sum of these targets. Categories without a target are shown as "Other duration".
+4. **Work Tracking**: Every category with a target above `00:00:00` counts as work. The daily target is the sum of these targets. Categories without a target are shown as "Other duration".
+
+### Other Settings
+
+|Setting|Default|Description|
+|---|---|---|
+|**First day of week**|Monday|Start of the week in the weekly reports and the dashboard. Also decides how weeks are numbered (ISO or US).|
+|**Monthly notes folder**|Vault root|Where the dashboard creates new monthly notes. Existing monthly notes are found anywhere in the vault.|
+|**Show charts in notes**|Off|Adds the dashboard charts below the tables of the code blocks.|
 
 ## Prerequisites
 
 - **Simple Time Tracker**: Required for the underlying data and API.
 - **Dataview**: Required for the plugin to scan and aggregate data.
-
-## Roadmap
-
-- Add yearly summaries as a code block (the dashboard already has a Year view).

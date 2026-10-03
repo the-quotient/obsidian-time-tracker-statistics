@@ -3,6 +3,7 @@ import {
     PluginSettingTab,
     Setting,
     TextComponent,
+    ToggleComponent,
     ButtonComponent,
     DropdownComponent
 } from "obsidian";
@@ -16,6 +17,7 @@ interface SafeSetting {
     addText(cb: (text: TextComponent) => void): SafeSetting;
     addButton(cb: (button: ButtonComponent) => void): SafeSetting;
     addDropdown(cb: (dropdown: DropdownComponent) => void): SafeSetting;
+    addToggle(cb: (toggle: ToggleComponent) => void): SafeSetting;
 }
 
 interface SettingConstructor {
@@ -120,6 +122,18 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.monthlyNotesFolder)
                     .onChange(async (value: string) => {
                         this.plugin.settings.monthlyNotesFolder = value.trim();
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new SafeSettingClass(container)
+            .setName('Show charts in notes')
+            .setDesc('Adds the dashboard charts below the tables of the ' +
+                'statistics code blocks. Refresh a block to apply.')
+            .addToggle((toggle: ToggleComponent) => {
+                toggle.setValue(this.plugin.settings.showChartsInNotes)
+                    .onChange(async (value: boolean) => {
+                        this.plugin.settings.showChartsInNotes = value;
                         await this.plugin.saveSettings();
                     });
             });

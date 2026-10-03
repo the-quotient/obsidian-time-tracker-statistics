@@ -11,13 +11,30 @@ import { Category } from "./settings";
 import {
     MonthConfig,
     CarryOverResult,
+    DayOffType,
     parseMonthConfig,
     getMonthDetails,
     getMonthRange,
+    getDayOffType,
     getDayWorkAndOther,
     isTargetDay,
     resolveCarryOver
 } from "./carry-over";
+import { ChartTooltip } from "./charts";
+import {
+    DistributionMode,
+    MonthConfigCache,
+    PeriodChartsOptions,
+    PeriodType,
+    computePeriodStats,
+    getDayOffLabel,
+    getPeriodRange,
+    getSeries,
+    getWeekStart,
+    renderChartGrid,
+    renderHeatmapCard,
+    toDateKey
+} from "./period-view";
 
 interface STTMomentDuration {
     asMilliseconds(): number;
@@ -64,6 +81,21 @@ interface ObsidianHTMLElement extends HTMLElement {
     ): HTMLElementTagNameMap[K] & ObsidianHTMLElement;
     addClass(cls: string): void;
 }
+
+interface ReportContext {
+    plugin: TimeTrackerStatisticsPlugin;
+    api: STT_API;
+    dataviewApi: MinimalDataviewApi;
+    fileName: string;
+    sourcePath: string;
+    component: Component;
+    tooltip: ChartTooltip;
+}
+
+type ReportRenderer = (
+    container: ObsidianHTMLElement,
+    context: ReportContext
+) => Promise<void>;
 
 interface SafeTFile {
     name: string;
@@ -336,11 +368,50 @@ function getRunningTrackerMarkdown(
     return "_No tracker is currently running._\n";
 }
 
-export function displayStatisticsDay(
+function getFileName(app: App, sourcePath: string): string {
+    const vault = app.vault as unknown as SafeVault;
+    const sourceFile = vault.getAbstractFileByPath(sourcePath);
+    if (sourceFile && typeof sourceFile.name === "string") {
+        return sourceFile.name;
+    }
+    const parts = sourcePath.split('/');
+    return parts[parts.length - 1] || "";
+}
+
+function formatSigned(api: STT_API, ms: number): string {
+    return (ms >= 0 ? "+" : "-") + api.formatDuration(Math.abs(ms));
+}
+
+async function renderMarkdown(
+    container: ObsidianHTMLElement,
+    context: ReportContext,
+    markdown: string
+): Promise<void> {
+    await safeRenderer.render(
+        context.plugin.app,
+        markdown,
+        container.createDiv(),
+        context.sourcePath,
+        context.component
+    );
+}
+
+function showMessage(container: ObsidianHTMLElement, text: string): void {
+    container.innerHTML = "";
+    container.createEl("p", { text });
+}
+
+/**
+ * Builds a statistics code block: title, refresh button and the report
+ * rendered by `renderer` from the note's file name.
+ */
+function displayStatistics(
     container: HTMLElement,
     plugin: TimeTrackerStatisticsPlugin,
     sourcePath: string,
-    component: Component
+    component: Component,
+    title: string,
+    renderer: ReportRenderer
 ): void {
     const cont = container as ObsidianHTMLElement;
     const app = plugin.app;
@@ -352,152 +423,34 @@ export function displayStatisticsDay(
         return;
     }
 
+    const tooltip = new ChartTooltip();
+    component.register(() => tooltip.destroy());
+
     const renderReport = async (contentContainer: ObsidianHTMLElement) => {
         const dataviewApi = getAPI(app) as unknown as MinimalDataviewApi;
         if (!dataviewApi) {
-            contentContainer.innerHTML = "";
-            contentContainer.createEl("p", {
-                text: "Dataview plugin is not enabled..."
-            });
-            return;
-        }
-
-        const vault = app.vault as unknown as SafeVault;
-        const sourceFile = vault.getAbstractFileByPath(sourcePath);
-        let fileName = "";
-
-        if (sourceFile && typeof sourceFile.name === "string") {
-            fileName = sourceFile.name;
-        } else {
-            const parts = sourcePath.split('/');
-            fileName = parts[parts.length - 1] || "";
-        }
-
-        const date = extractDate(fileName);
-
-        if (!date) {
-            contentContainer.innerHTML = "";
-            const msg = `Could not extract date (YYYY-MM-DD) from ` +
-                `file name: "${fileName}"`;
-            contentContainer.createEl("p", { text: msg });
+            showMessage(contentContainer, "Dataview plugin is not enabled...");
             return;
         }
 
         try {
             contentContainer.innerHTML = "";
-            const pages = await loadPageTrackers(dataviewApi, app, api);
-            const runningTrackerMd = getRunningTrackerMarkdown(pages, api);
-
-            const resultMap = getWorkingTimeMap(
-                pages,
+            tooltip.hide();
+            await renderer(contentContainer, {
                 plugin,
                 api,
-                date,
-                date
-            );
-            const workingTime = resultMap.get(date) || createEmptyResult();
-
-            let dailyReportMd = "";
-            if (workingTime.totalDuration === 0) {
-                dailyReportMd = "_No tracked time found for this day._";
-            } else {
-                const categoryTotals: { [key: string]: number } = {};
-                workingTime.entryDurations.forEach((dur, i) => {
-                    const category = workingTime.fileCategories[i] || "Unknown";
-                    if (!categoryTotals[category]) {
-                        categoryTotals[category] = 0;
-                    }
-                    categoryTotals[category] += dur;
-                });
-
-                const showTargetColumns = plugin.settings.categories.some(
-                    isWorkCategory
-                );
-
-                let totalsTable = `| Category | Duration |`;
-                if (showTargetColumns) {
-                    totalsTable += ` Remaining | Overtime |\n`;
-                    totalsTable += `|:---|:---|:---|:---|\n`;
-                } else {
-                    totalsTable += `\n|:---|:---|\n`;
-                }
-
-                for (const categoryName in categoryTotals) {
-                    const isName = (c: Category) => c.name === categoryName;
-                    const category = plugin.settings.categories.find(isName);
-                    const trackedDur = categoryTotals[categoryName] ?? 0;
-                    let remainingStr = "";
-                    let overtimeStr = "";
-
-                    if (category && category.target) {
-                        const targetMs = parseTargetTime(category.target);
-                        if (targetMs > 0) {
-                            const diffMs = trackedDur - targetMs;
-                            if (diffMs < 0) {
-                                remainingStr = api.formatDuration(-diffMs);
-                            } else {
-                                overtimeStr = api.formatDuration(diffMs);
-                            }
-                        }
-                    }
-
-                    const escName = escapeMarkdown(categoryName);
-                    const durFmt = api.formatDuration(trackedDur);
-                    totalsTable += `| **${escName}** | ${durFmt} |`;
-
-                    if (showTargetColumns) {
-                        totalsTable += ` ${remainingStr} | ${overtimeStr} |\n`;
-                    } else {
-                        totalsTable += `\n`;
-                    }
-                }
-
-                totalsTable += `| **Total** | `;
-                const tDur = api.formatDuration(workingTime.totalDuration);
-                totalsTable += `**${tDur}** |`;
-                if (showTargetColumns) {
-                    totalsTable += ` | |`;
-                }
-
-                let breakdownTable = `| Category | Entry | Duration |\n`;
-                breakdownTable += `|:---|:---|:---|\n`;
-
-                workingTime.fileCategories.forEach((category, i) => {
-                    const pageName = workingTime.pageNames[i]?.toUpperCase()
-                        || "UNKNOWN";
-                    const entryName = workingTime.entryNames[i] || "Unknown";
-                    const duration = workingTime.entryDurations[i] || 0;
-
-                    const escPage = escapeMarkdown(pageName);
-                    const escEntry = escapeMarkdown(entryName);
-                    const entryKey = `**${escPage}-${escEntry}**`;
-                    const durStr = api.formatDuration(duration);
-                    const escCat = escapeMarkdown(category);
-
-                    breakdownTable += `| ${escCat} | ${entryKey} `;
-                    breakdownTable += `| ${durStr} |\n`;
-                });
-
-                dailyReportMd = `#### Totals\n\n${totalsTable}\n\n`;
-                dailyReportMd += `#### Entries breakdown\n\n${breakdownTable}`;
-            }
-
-            const finalMarkdown = `${runningTrackerMd}\n${dailyReportMd}`;
-            contentContainer.innerHTML = "";
-            await safeRenderer.render(
-                app,
-                finalMarkdown,
-                contentContainer,
+                dataviewApi,
+                fileName: getFileName(app, sourcePath),
                 sourcePath,
-                component
-            );
-
-        } catch (error) {
-            console.error("Simple Time Tracker (Statistics) Error:", error);
-            contentContainer.innerHTML = "";
-            contentContainer.createEl("p", {
-                text: "An error occurred while generating the report."
+                component,
+                tooltip
             });
+        } catch (error) {
+            console.error(`Simple Time Tracker (${title}) Error:`, error);
+            showMessage(
+                contentContainer,
+                "An error occurred while generating the report."
+            );
         }
     };
 
@@ -507,7 +460,7 @@ export function displayStatisticsDay(
         cls: "simple-time-tracker-stats-header"
     });
     const titleGroup = header.createDiv({ cls: "stt-stats-title-group" });
-    titleGroup.createEl("h4", { text: "Daily statistics" });
+    titleGroup.createEl("h4", { text: title });
 
     const refreshButton = titleGroup.createEl("button", {
         cls: "clickable-icon",
@@ -530,6 +483,364 @@ export function displayStatisticsDay(
     });
 
     void renderReport(contentContainer);
+}
+
+/** Dashboard charts below the tables, if enabled in the settings. */
+async function renderCharts(
+    container: ObsidianHTMLElement,
+    context: ReportContext,
+    pages: PageTrackers[],
+    period: PeriodType,
+    anchor: Date
+): Promise<void> {
+    const { plugin, api, tooltip } = context;
+    if (!plugin.settings.showChartsInNotes) return;
+
+    const categories = plugin.settings.categories;
+    const firstDayOfWeek = plugin.settings.firstDayOfWeek;
+    const range = getPeriodRange(period, anchor, firstDayOfWeek);
+    const months = new MonthConfigCache(plugin.app);
+    await months.load(range.days);
+
+    const dayTargets = months.getDayTargets(range.days, categories);
+    const stats = computePeriodStats(
+        collectTrackedEntries(pages, categories, api),
+        categories,
+        range,
+        dayTargets
+    );
+    const chartsEl = container.createDiv({
+        cls: "stt-dashboard stt-note-charts"
+    });
+
+    const draw = (distributionMode: DistributionMode) => {
+        const options: PeriodChartsOptions = {
+            period,
+            range,
+            stats,
+            series: getSeries(categories, stats),
+            dayTargets,
+            firstDayOfWeek,
+            tooltip,
+            format: (ms: number) => api.formatDuration(ms),
+            getDayType: (day: Date) => months.getDayType(day),
+            onSelect: (selected: PeriodType, date: Date) =>
+                plugin.openDashboard(selected, date),
+            distributionMode,
+            onDistributionModeChange: draw
+        };
+        tooltip.hide();
+        chartsEl.empty();
+        renderHeatmapCard(chartsEl, options);
+        renderChartGrid(chartsEl, options);
+    };
+    draw("category");
+}
+
+function getDayLabel(label: string, dayType: DayOffType | null): string {
+    return dayType ? `*${label} - ${getDayOffLabel(dayType)}*` : label;
+}
+
+interface DayRow {
+    cells: string[];
+    work: number;
+    other: number;
+}
+
+function buildDayRow(
+    plugin: TimeTrackerStatisticsPlugin,
+    api: STT_API,
+    label: string,
+    workingTime: WorkingTimeResult | undefined
+): DayRow {
+    const { workDuration, otherDuration } = getDayWorkAndOther(
+        workingTime,
+        plugin.settings.categories
+    );
+    return {
+        cells: [
+            label,
+            api.formatDuration(workDuration),
+            api.formatDuration(otherDuration),
+            workingTime ? printBreakdown(workingTime, api) : ""
+        ],
+        work: workDuration,
+        other: otherDuration
+    };
+}
+
+/**
+ * Table of the days of a week with totals and the weekly deviation. With an
+ * `accumulatedDeviation`, a row with the running total is added.
+ */
+function buildWeekTable(
+    api: STT_API,
+    rows: DayRow[],
+    target: number,
+    accumulatedDeviation: number | null
+): string {
+    let table = `| Day | Work duration | Other duration | Entries |\n`;
+    table += `| --- | --- | --- | --- |\n`;
+
+    let work = 0, other = 0;
+    rows.forEach(row => {
+        table += `| ${row.cells.join(" | ")} |\n`;
+        work += row.work;
+        other += row.other;
+    });
+
+    table += `| **Total** | **${api.formatDuration(work)}** `;
+    table += `| **${api.formatDuration(other)}** |  |\n`;
+    table += `| **Weekly deviation** | `;
+    table += `**${formatSigned(api, work - target)}** |  |  |\n`;
+    if (accumulatedDeviation !== null) {
+        table += `| **Accumulated deviation** | `;
+        table += `**${formatSigned(api, accumulatedDeviation)}** |  |  |\n`;
+    }
+    return table;
+}
+
+function buildNotesTable(
+    api: STT_API,
+    dataMap: Map<string, WorkingTimeResult>
+): string {
+    const noteDurations = new Map<string, number>();
+    for (const workingTime of dataMap.values()) {
+        for (let i = 0; i < workingTime.pageNames.length; i++) {
+            const note = workingTime.pageNames[i] || "Unknown";
+            const duration = workingTime.entryDurations[i] || 0;
+            noteDurations.set(note, (noteDurations.get(note) || 0) + duration);
+        }
+    }
+
+    const sortedNoteDurations = Array.from(noteDurations.entries())
+        .sort((a, b) => b[1] - a[1]);
+
+    let table = `| Note | Duration |\n|:---|:---|\n`;
+    for (const [note, duration] of sortedNoteDurations) {
+        table += `| ${escapeMarkdown(note)} | `;
+        table += `${api.formatDuration(duration)} |\n`;
+    }
+    return table;
+}
+
+export function displayStatisticsDay(
+    container: HTMLElement,
+    plugin: TimeTrackerStatisticsPlugin,
+    sourcePath: string,
+    component: Component
+): void {
+    displayStatistics(
+        container,
+        plugin,
+        sourcePath,
+        component,
+        "Daily statistics",
+        renderDayReport
+    );
+}
+
+async function renderDayReport(
+    container: ObsidianHTMLElement,
+    context: ReportContext
+): Promise<void> {
+    const { plugin, api, fileName } = context;
+    const date = extractDate(fileName);
+    if (!date) {
+        showMessage(container, `Could not extract date (YYYY-MM-DD) ` +
+            `from file name: "${fileName}"`);
+        return;
+    }
+    const [year, month, dayOfMonth] = date.split("-").map(Number);
+    const day = new Date(year ?? 0, (month ?? 1) - 1, dayOfMonth ?? 1);
+
+    const pages = await loadPageTrackers(
+        context.dataviewApi,
+        plugin.app,
+        api
+    );
+    const months = new MonthConfigCache(plugin.app);
+    await months.load([day]);
+    const isTarget = months.isTargetDay(day);
+    const dayType = months.getDayType(day);
+
+    const resultMap = getWorkingTimeMap(pages, plugin, api, date, date);
+    const workingTime = resultMap.get(date) || createEmptyResult();
+    const categories = plugin.settings.categories;
+    const showTargetColumns = categories.some(isWorkCategory);
+
+    let dailyReportMd = "";
+    if (showTargetColumns && !isTarget) {
+        const reason = dayType ? getDayOffLabel(dayType) : "Weekend";
+        dailyReportMd += `_${reason}: no target for this day._\n\n`;
+    }
+
+    if (workingTime.totalDuration === 0) {
+        dailyReportMd += "_No tracked time found for this day._";
+    } else {
+        const categoryTotals = new Map<string, number>();
+        if (isTarget) {
+            for (const category of categories.filter(isWorkCategory)) {
+                categoryTotals.set(category.name, 0);
+            }
+        }
+        workingTime.entryDurations.forEach((dur, i) => {
+            const category = workingTime.fileCategories[i] || "Unknown";
+            categoryTotals.set(
+                category,
+                (categoryTotals.get(category) ?? 0) + dur
+            );
+        });
+
+        let totalsTable = `| Category | Duration |`;
+        if (showTargetColumns) {
+            totalsTable += ` Remaining | Overtime |\n`;
+            totalsTable += `|:---|:---|:---|:---|\n`;
+        } else {
+            totalsTable += `\n|:---|:---|\n`;
+        }
+
+        for (const [categoryName, trackedDur] of categoryTotals) {
+            const category = categories.find(c => c.name === categoryName);
+            let remainingStr = "";
+            let overtimeStr = "";
+
+            if (category && isWorkCategory(category)) {
+                const targetMs = isTarget
+                    ? parseTargetTime(category.target) : 0;
+                const diffMs = trackedDur - targetMs;
+                if (diffMs < 0) {
+                    remainingStr = api.formatDuration(-diffMs);
+                } else if (diffMs > 0) {
+                    overtimeStr = api.formatDuration(diffMs);
+                }
+            }
+
+            const escName = escapeMarkdown(categoryName);
+            const durFmt = api.formatDuration(trackedDur);
+            totalsTable += `| **${escName}** | ${durFmt} |`;
+
+            if (showTargetColumns) {
+                totalsTable += ` ${remainingStr} | ${overtimeStr} |\n`;
+            } else {
+                totalsTable += `\n`;
+            }
+        }
+
+        totalsTable += `| **Total** | `;
+        const tDur = api.formatDuration(workingTime.totalDuration);
+        totalsTable += `**${tDur}** |`;
+        if (showTargetColumns) {
+            totalsTable += ` | |`;
+        }
+
+        let breakdownTable = `| Category | Entry | Duration |\n`;
+        breakdownTable += `|:---|:---|:---|\n`;
+
+        workingTime.fileCategories.forEach((category, i) => {
+            const pageName = workingTime.pageNames[i]?.toUpperCase()
+                || "UNKNOWN";
+            const entryName = workingTime.entryNames[i] || "Unknown";
+            const duration = workingTime.entryDurations[i] || 0;
+
+            const escPage = escapeMarkdown(pageName);
+            const escEntry = escapeMarkdown(entryName);
+            const entryKey = `**${escPage}-${escEntry}**`;
+            const durStr = api.formatDuration(duration);
+            const escCat = escapeMarkdown(category);
+
+            breakdownTable += `| ${escCat} | ${entryKey} `;
+            breakdownTable += `| ${durStr} |\n`;
+        });
+
+        dailyReportMd += `#### Totals\n\n${totalsTable}\n\n`;
+        dailyReportMd += `#### Entries breakdown\n\n${breakdownTable}`;
+    }
+
+    const runningTrackerMd = getRunningTrackerMarkdown(pages, api);
+    await renderMarkdown(
+        container,
+        context,
+        `${runningTrackerMd}\n${dailyReportMd}`
+    );
+    await renderCharts(container, context, pages, "day", day);
+}
+
+export function displayStatisticsWeek(
+    container: HTMLElement,
+    plugin: TimeTrackerStatisticsPlugin,
+    sourcePath: string,
+    component: Component
+): void {
+    displayStatistics(
+        container,
+        plugin,
+        sourcePath,
+        component,
+        "Weekly statistics",
+        renderWeekReport
+    );
+}
+
+async function renderWeekReport(
+    container: ObsidianHTMLElement,
+    context: ReportContext
+): Promise<void> {
+    const { plugin, api, fileName } = context;
+    const match = fileName.match(/(\d{4})-?W(\d{1,2})/i);
+    const year = Number(match?.[1]);
+    const week = Number(match?.[2]);
+    if (!match || week < 1 || week > 53) {
+        showMessage(container, `Could not extract year and week ` +
+            `(YYYY-Www) from file name: "${fileName}"`);
+        return;
+    }
+
+    const firstDayOfWeek = plugin.settings.firstDayOfWeek;
+    const start = getWeekStart(year, week, firstDayOfWeek);
+    const { days } = getPeriodRange("week", start, firstDayOfWeek);
+    const startKey = toDateKey(start);
+    const endKey = toDateKey(days[days.length - 1] ?? start);
+    const todayKey = toDateKey(new Date());
+
+    const startMoment = safeMoment(startKey);
+    const endMoment = safeMoment(endKey);
+    container.createEl("h4", {
+        text: `Week ${week} · ${startMoment.format("D MMM")} – ` +
+            endMoment.format("D MMM YYYY")
+    });
+
+    const pages = await loadPageTrackers(
+        context.dataviewApi,
+        plugin.app,
+        api
+    );
+    const months = new MonthConfigCache(plugin.app);
+    await months.load(days);
+    const dataMap = getWorkingTimeMap(pages, plugin, api, startKey, endKey);
+    const dailyTarget = getDailyTarget(plugin.settings.categories);
+
+    let target = 0;
+    const rows = days.map(day => {
+        const dateKey = toDateKey(day);
+        if (months.isTargetDay(day) && dateKey <= todayKey) {
+            target += dailyTarget;
+        }
+        const label = getDayLabel(
+            safeMoment(dateKey).format("D MMM (dd)"),
+            months.getDayType(day)
+        );
+        return buildDayRow(plugin, api, label, dataMap.get(dateKey));
+    });
+
+    await renderMarkdown(
+        container,
+        context,
+        buildWeekTable(api, rows, target, null)
+    );
+    container.createEl("h4", { text: "Notes" });
+    await renderMarkdown(container, context, buildNotesTable(api, dataMap));
+    await renderCharts(container, context, pages, "week", start);
 }
 
 export function displayStatisticsMonth(
@@ -539,126 +850,50 @@ export function displayStatisticsMonth(
     blockContent: string,
     component: Component
 ): void {
-    const cont = container as ObsidianHTMLElement;
-    const app = plugin.app;
-    const api = getSTTApi(app);
+    displayStatistics(
+        container,
+        plugin,
+        sourcePath,
+        component,
+        "Monthly statistics",
+        (contentContainer, context) => renderMonthReport(
+            contentContainer,
+            context,
+            parseMonthConfig(blockContent)
+        )
+    );
+}
 
-    if (!api) {
-        cont.innerHTML = "";
-        cont.createEl("p", { text: "Simple time tracker is required." });
+async function renderMonthReport(
+    container: ObsidianHTMLElement,
+    context: ReportContext,
+    config: MonthConfig
+): Promise<void> {
+    const { plugin, api, fileName } = context;
+    const year = extractYear(fileName);
+    const monthIndex = extractMonth(fileName);
+    if (!year || !monthIndex) {
+        showMessage(container, `Could not extract year and month ` +
+            `from file name: "${fileName}"`);
         return;
     }
 
-    const renderReport = async (contentContainer: ObsidianHTMLElement) => {
-        const dataviewApi = getAPI(app) as unknown as MinimalDataviewApi;
-        if (!dataviewApi) {
-            contentContainer.innerHTML = "";
-            contentContainer.createEl("p", {
-                text: "Dataview plugin is not enabled..."
-            });
-            return;
-        }
-
-        const config = parseMonthConfig(blockContent);
-
-        const vault = app.vault as unknown as SafeVault;
-        const sourceFile = vault.getAbstractFileByPath(sourcePath);
-        let fileName = "";
-
-        if (sourceFile && typeof sourceFile.name === "string") {
-            fileName = sourceFile.name;
-        } else {
-            const parts = sourcePath.split('/');
-            fileName = parts[parts.length - 1] || "";
-        }
-
-        const year = extractYear(fileName);
-        const monthIndex = extractMonth(fileName);
-
-        if (!year || !monthIndex) {
-            contentContainer.innerHTML = "";
-            const msg = `Could not extract year and month from ` +
-                `file name: "${fileName}"`;
-            contentContainer.createEl("p", { text: msg });
-            return;
-        }
-
-        try {
-            contentContainer.innerHTML = "";
-            await printWorkingTimeOfMonth(
-                contentContainer,
-                dataviewApi,
-                plugin,
-                api,
-                year,
-                monthIndex,
-                config,
-                sourcePath,
-                component
-            );
-        } catch (error) {
-            console.error("Simple Time Tracker (Monthly) Error:", error);
-            contentContainer.innerHTML = "";
-            contentContainer.createEl("p", {
-                text: "An error occurred while generating the report."
-            });
-        }
-    };
-
-    cont.innerHTML = "";
-    cont.addClass("simple-time-tracker-stats-container");
-    const header = cont.createDiv({
-        cls: "simple-time-tracker-stats-header"
-    });
-    const titleGroup = header.createDiv({ cls: "stt-stats-title-group" });
-    titleGroup.createEl("h4", { text: "Monthly statistics" });
-
-    const refreshButton = titleGroup.createEl("button", {
-        cls: "clickable-icon",
-        attr: { "aria-label": "Refresh" }
-    });
-
-    setIcon(refreshButton, "refresh-cw");
-    const contentContainer = cont.createDiv({
-        cls: "simple-time-tracker-stats-content"
-    });
-
-    refreshButton.addEventListener("click", () => {
-        setIcon(refreshButton, "loader");
-        refreshButton.disabled = true;
-        void renderReport(contentContainer).finally(() => {
-            setIcon(refreshButton, "refresh-cw");
-            refreshButton.disabled = false;
-        });
-    });
-
-    void renderReport(contentContainer);
-}
-
-async function printWorkingTimeOfMonth(
-    container: ObsidianHTMLElement,
-    dataviewApi: MinimalDataviewApi,
-    plugin: TimeTrackerStatisticsPlugin,
-    api: STT_API,
-    year: number,
-    monthIndex: number,
-    config: MonthConfig,
-    sourcePath: string,
-    component: Component
-) {
-    const { daysOff, vacationDays, sickDays } = config;
     const dailyTarget = getDailyTarget(plugin.settings.categories);
-
     const monthDetails = getMonthDetails(year, monthIndex);
     const monthRange = getMonthRange(year, monthIndex);
     if (!monthDetails || !monthRange) throw new Error("Invalid month index");
     const { startDate, endDate } = monthRange;
+    const todayKey = toDateKey(new Date());
 
     container.createEl("h4", { text: monthDetails.name });
 
-    const pages = await loadPageTrackers(dataviewApi, plugin.app, api);
+    const pages = await loadPageTrackers(
+        context.dataviewApi,
+        plugin.app,
+        api
+    );
 
-    let deviation = 0;
+    let accumulatedDeviation = 0;
     if (config.deviation === "auto") {
         const carryOver = await resolveCarryOver(
             plugin,
@@ -667,16 +902,14 @@ async function printWorkingTimeOfMonth(
             year,
             monthIndex
         );
-        deviation = carryOver.deviation;
-        void safeRenderer.render(
-            plugin.app,
-            getCarryOverMarkdown(carryOver, api),
-            container.createDiv(),
-            sourcePath,
-            component
+        accumulatedDeviation = carryOver.deviation;
+        await renderMarkdown(
+            container,
+            context,
+            getCarryOverMarkdown(carryOver, api)
         );
     } else {
-        deviation = config.deviation;
+        accumulatedDeviation = config.deviation;
     }
 
     const monthlyDataMap = getWorkingTimeMap(
@@ -687,22 +920,16 @@ async function printWorkingTimeOfMonth(
         endDate
     );
 
-    let weekRows: string[][] = [];
-    let weeklyWorkTotal = 0;
-    let weeklyOtherTotal = 0;
+    let weekRows: DayRow[] = [];
     let weeklyTarget = 0;
-    let accumulatedDeviation = deviation;
-
     const endOfWeekIndex = plugin.settings.firstDayOfWeek === 1 ? 0 : 6;
 
-    for (let i = 1; i <= monthDetails.days; i++) {
-        const day = i;
+    for (let day = 1; day <= monthDetails.days; day++) {
         const currentMoment = safeMoment({
             year: year,
             month: monthIndex - 1,
             day: day
         });
-        const dayOfWeek = currentMoment.format("dd");
 
         let weekNumber = currentMoment.clone().locale("en").week();
         if (plugin.settings.firstDayOfWeek === 1) {
@@ -710,72 +937,50 @@ async function printWorkingTimeOfMonth(
         }
 
         const dateKey = currentMoment.format("YYYY-MM-DD");
-        const workingTime = monthlyDataMap.get(dateKey);
-
-        const { workDuration, otherDuration } = getDayWorkAndOther(
-            workingTime,
-            plugin.settings.categories
-        );
-
-        weeklyWorkTotal += workDuration;
-        weeklyOtherTotal += otherDuration;
-
-        if (isTargetDay(year, monthIndex, day, config)) {
+        if (isTargetDay(year, monthIndex, day, config) &&
+            dateKey <= todayKey) {
             weeklyTarget += dailyTarget;
         }
 
-        let dayLabel = `${day} (${dayOfWeek})`;
-        if (daysOff.includes(day)) {
-            dayLabel = `*${day} (${dayOfWeek}) - Day Off*`;
-        } else if (vacationDays.includes(day)) {
-            dayLabel = `*${day} (${dayOfWeek}) - Vacation*`;
-        } else if (sickDays.includes(day)) {
-            dayLabel = `*${day} (${dayOfWeek}) - Sick*`;
-        }
+        const row = buildDayRow(
+            plugin,
+            api,
+            getDayLabel(
+                `${day} (${currentMoment.format("dd")})`,
+                getDayOffType(config, day)
+            ),
+            monthlyDataMap.get(dateKey)
+        );
+        weekRows.push(row);
+        accumulatedDeviation += row.work;
 
-        weekRows.push([
-            dayLabel,
-            api.formatDuration(workDuration),
-            api.formatDuration(otherDuration),
-            workingTime ? printBreakdown(workingTime, api) : ""
-        ]);
-
-        const dayOfWeekIndex = currentMoment.day();
         const isLastDayOfMonth = day === monthDetails.days;
-
-        if (dayOfWeekIndex === endOfWeekIndex || isLastDayOfMonth) {
-            accumulatedDeviation = renderWeekTableWithApp(
-                plugin.app,
+        if (currentMoment.day() === endOfWeekIndex || isLastDayOfMonth) {
+            accumulatedDeviation -= weeklyTarget;
+            container.createEl("h5", { text: `Week ${weekNumber}` });
+            await renderMarkdown(
                 container,
-                api,
-                weekRows,
-                weeklyWorkTotal,
-                weeklyOtherTotal,
-                weeklyTarget,
-                accumulatedDeviation,
-                weekNumber,
-                sourcePath,
-                component
+                context,
+                buildWeekTable(api, weekRows, weeklyTarget, accumulatedDeviation)
             );
-            weeklyWorkTotal = 0;
-            weeklyOtherTotal = 0;
             weeklyTarget = 0;
             weekRows = [];
         }
     }
 
     container.createEl("h4", { text: "End of month summary" });
-    renderEndOfMonthSummary(
-        plugin.app,
+    await renderMarkdown(
         container,
-        api,
-        accumulatedDeviation,
-        daysOff,
-        vacationDays,
-        sickDays,
-        sourcePath,
-        component,
-        monthlyDataMap
+        context,
+        buildMonthSummary(api, accumulatedDeviation, config) + "\n\n" +
+            buildNotesTable(api, monthlyDataMap)
+    );
+    await renderCharts(
+        container,
+        context,
+        pages,
+        "month",
+        new Date(year, monthIndex - 1, 1)
     );
 }
 
@@ -787,124 +992,132 @@ function getCarryOverMarkdown(
         return "_No previous month note found; starting at 0._";
     }
     const { path, basename } = carryOver.source;
-    const sign = carryOver.deviation >= 0 ? "+" : "-";
-    const value = api.formatDuration(Math.abs(carryOver.deviation));
-    return `**Carried over:** ${sign}${value} from [[${path}|${basename}]]`;
+    const value = formatSigned(api, carryOver.deviation);
+    return `**Carried over:** ${value} from [[${path}|${basename}]]`;
 }
 
-function renderEndOfMonthSummary(
-    app: App,
-    container: ObsidianHTMLElement,
+function buildMonthSummary(
     api: STT_API,
     accumulatedDeviation: number,
-    daysOff: number[],
-    vacationDays: number[],
-    sickDays: number[],
-    sourcePath: string,
-    component: Component,
-    monthlyDataMap: Map<string, WorkingTimeResult>
-) {
-    const headers = ["Metric", "Value"];
-    let table = `| ${headers[0]} | ${headers[1]} |\n| --- | --- |\n`;
-
-    const accDevFmt = api.formatDuration(Math.abs(accumulatedDeviation));
-    const sign = accumulatedDeviation >= 0 ? "+" : "-";
-    const accumulatedDeviationFormatted = `${sign}${accDevFmt}`;
-
+    config: MonthConfig
+): string {
+    let table = `| Metric | Value |\n| --- | --- |\n`;
     table += `| **Total accumulated deviation** | `;
-    table += `**${accumulatedDeviationFormatted}** |\n`;
+    table += `**${formatSigned(api, accumulatedDeviation)}** |\n`;
     table += `| **Total accumulated deviation (ms)** | `;
     table += `**${accumulatedDeviation}** |\n`;
-    table += `| **Number of days off** | **${daysOff.length}** |\n`;
-    table += `| **Number of vacation days** | **${vacationDays.length}** |\n`;
-    table += `| **Number of sick days** | **${sickDays.length}** |\n`;
+    table += `| **Number of days off** | **${config.daysOff.length}** |\n`;
+    table += `| **Number of vacation days** | `;
+    table += `**${config.vacationDays.length}** |\n`;
+    table += `| **Number of sick days** | **${config.sickDays.length}** |\n`;
+    return table;
+}
 
-    const noteDurations = new Map<string, number>();
-    for (const workingTime of monthlyDataMap.values()) {
-        for (let i = 0; i < workingTime.pageNames.length; i++) {
-            const note = workingTime.pageNames[i] || "Unknown";
-            const duration = workingTime.entryDurations[i] || 0;
-            noteDurations.set(note, (noteDurations.get(note) || 0) + duration);
-        }
-    }
-
-    const sortedNoteDurations = Array.from(noteDurations.entries())
-        .sort((a, b) => b[1] - a[1]);
-
-    let breakdownTable = `\n\n| Note | Duration |\n|:---|:---|\n`;
-    for (const [note, duration] of sortedNoteDurations) {
-        const escNote = escapeMarkdown(note);
-        const durFmt = api.formatDuration(duration);
-        breakdownTable += `| ${escNote} | ${durFmt} |\n`;
-    }
-
-    table += breakdownTable;
-
-    void safeRenderer.render(
-        app,
-        table,
-        container.createDiv(),
+export function displayStatisticsYear(
+    container: HTMLElement,
+    plugin: TimeTrackerStatisticsPlugin,
+    sourcePath: string,
+    component: Component
+): void {
+    displayStatistics(
+        container,
+        plugin,
         sourcePath,
-        component
+        component,
+        "Yearly statistics",
+        renderYearReport
     );
 }
 
-function renderWeekTableWithApp(
-    app: App,
+async function renderYearReport(
     container: ObsidianHTMLElement,
-    api: STT_API,
-    rows: string[][],
-    weeklyWorkTotal: number,
-    weeklyOtherTotal: number,
-    targetTimeForWeek: number,
-    accumulatedDeviation: number,
-    weekNumber: number,
-    sourcePath: string,
-    component: Component
-): number {
-    container.createEl("h5", { text: `Week ${weekNumber}` });
-    const headers = ["Day", "Work duration", "Other duration", "Entries"];
-    let table = `| ${headers[0]} | ${headers[1]} `;
-    table += `| ${headers[2]} | ${headers[3]} |\n`;
-    table += `| --- | --- | --- | --- |\n`;
+    context: ReportContext
+): Promise<void> {
+    const { plugin, api, fileName } = context;
+    const year = extractYear(fileName);
+    if (!year) {
+        showMessage(container, `Could not extract year (YYYY) ` +
+            `from file name: "${fileName}"`);
+        return;
+    }
 
-    rows.forEach(row => {
-        table += `| ${row[0]} | ${row[1]} | ${row[2]} | ${row[3]} |\n`;
-    });
-
-    const workTotalFormatted = api.formatDuration(weeklyWorkTotal);
-    const otherTotalFormatted = api.formatDuration(weeklyOtherTotal);
-
-    const weeklyDeviation = weeklyWorkTotal - targetTimeForWeek;
-    accumulatedDeviation += weeklyDeviation;
-
-    let weeklyDeviationFormatted = api.formatDuration(
-        Math.abs(weeklyDeviation)
+    const categories = plugin.settings.categories;
+    const dailyTarget = getDailyTarget(categories);
+    const { days } = getPeriodRange(
+        "year",
+        new Date(year, 0, 1),
+        plugin.settings.firstDayOfWeek
     );
-    weeklyDeviationFormatted = (weeklyDeviation >= 0 ? "+" : "-") +
-        weeklyDeviationFormatted;
+    const todayKey = toDateKey(new Date());
 
-    let accDeviationFormatted = api.formatDuration(
-        Math.abs(accumulatedDeviation)
+    container.createEl("h4", { text: String(year) });
+
+    const pages = await loadPageTrackers(
+        context.dataviewApi,
+        plugin.app,
+        api
     );
-    accDeviationFormatted = (accumulatedDeviation >= 0 ? "+" : "-") +
-        accDeviationFormatted;
-
-    table += `| **Total** | **${workTotalFormatted}** `;
-    table += `| **${otherTotalFormatted}** |  |\n`;
-    table += `| **Weekly deviation** | **${weeklyDeviationFormatted}** `;
-    table += `|  |  |\n`;
-    table += `| **Accumulated deviation** | **${accDeviationFormatted}** `;
-    table += `|  |  |\n`;
-
-    void safeRenderer.render(
-        app,
-        table,
-        container.createDiv(),
-        sourcePath,
-        component
+    const months = new MonthConfigCache(plugin.app);
+    await months.load(days);
+    const dataMap = getWorkingTimeMap(
+        pages,
+        plugin,
+        api,
+        `${year}-01-01`,
+        `${year}-12-31`
     );
-    return accumulatedDeviation;
+
+    let table = `| Month | Work duration | Other duration | Target ` +
+        `| Deviation | Days off | Vacation days | Sick days |\n`;
+    table += `| --- | --- | --- | --- | --- | --- | --- | --- |\n`;
+    const totals = { work: 0, other: 0, target: 0, off: 0, vacation: 0, sick: 0 };
+
+    for (let monthIndex = 1; monthIndex <= 12; monthIndex++) {
+        const first = new Date(year, monthIndex - 1, 1);
+        const monthDays = days.filter(d => d.getMonth() === monthIndex - 1);
+        let work = 0, other = 0, target = 0;
+        for (const day of monthDays) {
+            const dateKey = toDateKey(day);
+            const durations = getDayWorkAndOther(
+                dataMap.get(dateKey),
+                categories
+            );
+            work += durations.workDuration;
+            other += durations.otherDuration;
+            if (months.isTargetDay(day) && dateKey <= todayKey) {
+                target += dailyTarget;
+            }
+        }
+
+        const { config, path } = months.get(first);
+        const name = getMonthDetails(year, monthIndex)?.name ?? "";
+        const label = path ? `[[${path}\\|${name}]]` : name;
+        table += `| ${label} | ${api.formatDuration(work)} ` +
+            `| ${api.formatDuration(other)} ` +
+            `| ${api.formatDuration(target)} ` +
+            `| ${formatSigned(api, work - target)} ` +
+            `| ${config.daysOff.length} | ${config.vacationDays.length} ` +
+            `| ${config.sickDays.length} |\n`;
+
+        totals.work += work;
+        totals.other += other;
+        totals.target += target;
+        totals.off += config.daysOff.length;
+        totals.vacation += config.vacationDays.length;
+        totals.sick += config.sickDays.length;
+    }
+
+    table += `| **Total** | **${api.formatDuration(totals.work)}** ` +
+        `| **${api.formatDuration(totals.other)}** ` +
+        `| **${api.formatDuration(totals.target)}** ` +
+        `| **${formatSigned(api, totals.work - totals.target)}** ` +
+        `| **${totals.off}** | **${totals.vacation}** ` +
+        `| **${totals.sick}** |\n`;
+
+    await renderMarkdown(container, context, table);
+    container.createEl("h4", { text: "Notes" });
+    await renderMarkdown(container, context, buildNotesTable(api, dataMap));
+    await renderCharts(container, context, pages, "year", new Date(year, 0, 1));
 }
 
 function printBreakdown(workingTime: WorkingTimeResult, api: STT_API): string {
