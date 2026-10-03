@@ -103,7 +103,7 @@ interface DataviewPage {
     file?: DataviewFile;
 }
 
-interface MinimalDataviewApi {
+export interface MinimalDataviewApi {
     pages(query: string): Iterable<DataviewPage>;
 }
 
@@ -121,7 +121,7 @@ export interface WorkingTimeResult {
     entryDurations: number[];
 }
 
-function getSTTApi(app: App): STT_API | null {
+export function getSTTApi(app: App): STT_API | null {
     const internalApp = app as unknown as InternalApp;
     const sttPlugin = internalApp.plugins?.plugins?.["simple-time-tracker"];
     if (!sttPlugin || !sttPlugin.api) {
@@ -142,7 +142,7 @@ function getLocalDateKey(timestamp: string | null): string | null {
     return time.isValid() ? time.format("YYYY-MM-DD") : null;
 }
 
-function parseTargetTime(target: string): number {
+export function parseTargetTime(target: string): number {
     if (!target) return 0;
     return safeMoment.duration(target).asMilliseconds();
 }
@@ -188,7 +188,7 @@ export interface PageTrackers {
     trackers: Tracker[];
 }
 
-async function loadPageTrackers(
+export async function loadPageTrackers(
     dataviewApi: MinimalDataviewApi,
     app: App,
     api: STT_API
@@ -217,6 +217,81 @@ async function loadPageTrackers(
     return result;
 }
 
+export interface TrackedEntry {
+    dateKey: string;
+    category: string;
+    path: string;
+    pageName: string;
+    name: string;
+    duration: number;
+    startTime: string;
+    endTime: string | null;
+}
+
+export function getPageCategory(tags: string[], categories: Category[]): string {
+    const pageTags = new Set(tags);
+    for (const cat of categories) {
+        if (cat.tags.some((tag: string) => pageTags.has(tag))) {
+            return cat.name;
+        }
+    }
+    return "Other";
+}
+
+export function collectTrackedEntries(
+    pages: PageTrackers[],
+    categories: Category[],
+    api: STT_API
+): TrackedEntry[] {
+    const result: TrackedEntry[] = [];
+
+    function processEntries(
+        entries: Entry[],
+        page: PageTrackers,
+        category: string,
+        parentName = ''
+    ) {
+        entries.forEach(entry => {
+            const dateKey = getLocalDateKey(entry.startTime);
+
+            if (dateKey && entry.startTime) {
+                let fullName = entry.name;
+                if (parentName) {
+                    fullName = `${parentName} -> ${entry.name}`;
+                }
+
+                result.push({
+                    dateKey,
+                    category,
+                    path: page.path,
+                    pageName: page.basename,
+                    name: fullName,
+                    duration: api.getDuration(entry),
+                    startTime: entry.startTime,
+                    endTime: entry.endTime
+                });
+            }
+
+            if (entry.subEntries) {
+                let newParentName = entry.name;
+                if (parentName) {
+                    newParentName = `${parentName} -> ${entry.name}`;
+                }
+                processEntries(entry.subEntries, page, category, newParentName);
+            }
+        });
+    }
+
+    for (const page of pages) {
+        const category = getPageCategory(page.tags, categories);
+        for (const tracker of page.trackers) {
+            processEntries(tracker.entries, page, category);
+        }
+    }
+
+    return result;
+}
+
 export function getWorkingTimeMap(
     pages: PageTrackers[],
     plugin: TimeTrackerStatisticsPlugin,
@@ -225,74 +300,24 @@ export function getWorkingTimeMap(
     endDate: string
 ): Map<string, WorkingTimeResult> {
     const resultMap = new Map<string, WorkingTimeResult>();
-    const startMoment = safeMoment(startDate);
-    const endMoment = safeMoment(endDate);
+    const entries = collectTrackedEntries(
+        pages,
+        plugin.settings.categories,
+        api
+    );
 
-    function processEntries(
-        entries: Entry[],
-        pageName: string,
-        category: string,
-        sttApi: STT_API,
-        parentName = ''
-    ) {
-        entries.forEach(entry => {
-            const dateStr = getLocalDateKey(entry.startTime);
+    for (const entry of entries) {
+        if (entry.dateKey < startDate || entry.dateKey > endDate) continue;
 
-            if (dateStr) {
-                const entryDate = safeMoment(dateStr);
-                const isAfterStart = entryDate.isSameOrAfter(startMoment);
-                const isBeforeEnd = entryDate.isSameOrBefore(endMoment);
-
-                if (isAfterStart && isBeforeEnd) {
-                    if (!resultMap.has(dateStr)) {
-                        resultMap.set(dateStr, createEmptyResult());
-                    }
-                    const result = resultMap.get(dateStr)!;
-                    const duration = sttApi.getDuration(entry);
-
-                    let fullName = entry.name;
-                    if (parentName) {
-                        fullName = `${parentName} -> ${entry.name}`;
-                    }
-
-                    result.totalDuration += duration;
-                    result.fileCategories.push(category);
-                    result.pageNames.push(pageName);
-                    result.entryNames.push(fullName);
-                    result.entryDurations.push(duration);
-                }
-            }
-
-            if (entry.subEntries) {
-                let newParentName = entry.name;
-                if (parentName) {
-                    newParentName = `${parentName} -> ${entry.name}`;
-                }
-                processEntries(
-                    entry.subEntries,
-                    pageName,
-                    category,
-                    sttApi,
-                    newParentName
-                );
-            }
-        });
-    }
-
-    for (const { basename, tags, trackers } of pages) {
-        const pageTags = new Set(tags);
-
-        let category = "Other";
-        for (const cat of plugin.settings.categories) {
-            if (cat.tags.some((tag: string) => pageTags.has(tag))) {
-                category = cat.name;
-                break;
-            }
+        if (!resultMap.has(entry.dateKey)) {
+            resultMap.set(entry.dateKey, createEmptyResult());
         }
-
-        for (const tracker of trackers) {
-            processEntries(tracker.entries, basename, category, api);
-        }
+        const result = resultMap.get(entry.dateKey)!;
+        result.totalDuration += entry.duration;
+        result.fileCategories.push(entry.category);
+        result.pageNames.push(entry.pageName);
+        result.entryNames.push(entry.name);
+        result.entryDurations.push(entry.duration);
     }
 
     return resultMap;

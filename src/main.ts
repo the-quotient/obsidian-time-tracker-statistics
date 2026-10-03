@@ -7,6 +7,7 @@ import {
 import { defaultSettings, TimeTrackerStatisticsSettings } from "./settings";
 import { TimeTrackerStatisticsSettingsTab } from "./settings-tab";
 import { displayStatisticsDay, displayStatisticsMonth } from "./statistics";
+import { PERIODS, PeriodType, StatisticsDashboardModal } from "./dashboard";
 
 export default class TimeTrackerStatisticsPlugin extends Plugin {
     settings: TimeTrackerStatisticsSettings;
@@ -62,6 +63,26 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
         );
 
         this.addCommand({
+            id: "open-statistics-dashboard",
+            name: "Open statistics dashboard",
+            callback: () => this.openDashboard()
+        });
+
+        for (const { type, label } of PERIODS) {
+            this.addCommand({
+                id: `open-statistics-dashboard-${type}`,
+                name: `Open statistics dashboard: ${label.toLowerCase()} view`,
+                callback: () => this.openDashboard(type)
+            });
+        }
+
+        this.addRibbonIcon(
+            "bar-chart-3",
+            "Open time tracker statistics",
+            () => this.openDashboard()
+        );
+
+        this.addCommand({
             id: "insert-stats-day",
             name: "Insert daily statistics",
             editorCallback: (editor: Editor) => {
@@ -83,6 +104,10 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
                 editor.replaceSelection(block);
             }
         });
+    }
+
+    openDashboard(period?: PeriodType): void {
+        new StatisticsDashboardModal(this.app, this, period).open();
     }
 
     async loadSettings(): Promise<void> {

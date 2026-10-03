@@ -235,6 +235,15 @@ async function findMonthNote(
     return null;
 }
 
+export async function loadMonthConfig(
+    app: App,
+    year: number,
+    monthIndex: number
+): Promise<MonthConfig | null> {
+    const note = await findMonthNote(app, year, monthIndex);
+    return note ? note.config : null;
+}
+
 export async function resolveCarryOver(
     plugin: TimeTrackerStatisticsPlugin,
     api: STT_API,

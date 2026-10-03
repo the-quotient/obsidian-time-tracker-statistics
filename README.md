@@ -38,6 +38,50 @@ A comprehensive report grouping entries by week and calculating long-term time b
 
 <img width="857" height="578" alt="image" src="https://github.com/user-attachments/assets/9e690e5d-b395-4c4f-b52d-c334f3fe6e6f" />
 
+### 3. Statistics Dashboard
+
+A popup window with interactive charts for the whole vault. It works independently of any note, so you can use it alongside the code blocks or instead of them.
+
+- **Command**: `Open statistics dashboard` (also available from the ribbon icon) opens the Day view. To jump straight to a view, use `Open statistics dashboard: year view`, `… month view`, `… week view` or `… day view`.
+- **Views**: Year, Month, Week and Day. Navigate with the arrow buttons, the left/right arrow keys or *Today*.
+
+**Each view includes:**
+
+- **Summary tiles**: Total tracked time, work time, target, deviation, active days and daily average. For the current period, target and deviation are counted up to today.
+- **Heatmap**: A calendar of daily totals (Year, Month), or the time tracked per hour (Week: per day, Day: per category).
+- **Bar chart**: Time per month, day or hour, stacked by category, with the daily target marked.
+- **Distribution**: A donut chart of the tracked time by category or by note.
+- **Table**: Time per note, or every entry of the day in the Day view.
+
+Click a day in a heatmap or bar chart to open it in the Day view, or a month bar in the Year view to open that month. Targets respect the vacation, sick and off days set in the monthly notes. Hourly charts split entries by clock time, so an entry that runs past midnight appears on both days.
+
+#### Day view
+
+Hours by category, time per hour and every entry of the day.
+
+<img width="1100" alt="Day view of the statistics dashboard" src="docs/images/dashboard-day.png" />
+
+#### Week view
+
+An hour-by-day heatmap shows when you worked; the bars compare each day with the daily target.
+
+<img width="1100" alt="Week view of the statistics dashboard" src="docs/images/dashboard-week.png" />
+
+#### Month view
+
+A calendar heatmap of daily totals. Hover over any cell or bar for details.
+
+<img width="1100" alt="Month view of the statistics dashboard" src="docs/images/dashboard-month.png" />
+
+#### Year view
+
+A contribution-style heatmap of the whole year and the time per month against the monthly target.
+
+<img width="1100" alt="Year view of the statistics dashboard" src="docs/images/dashboard-year.png" />
+
+#### Dark mode and distribution by note
+
+<img width="1100" alt="Month view in dark mode with the distribution by note" src="docs/images/dashboard-month-dark.png" />
 
 ## Managing Time Off
 
@@ -78,4 +122,4 @@ To make the statistics meaningful, map your vault's tags to categories in the **
 
 ## Roadmap
 
-- Add yearly summaries.
+- Add yearly summaries as a code block (the dashboard already has a Year view).
