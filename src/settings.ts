@@ -9,6 +9,7 @@ export interface TimeTrackerStatisticsSettings {
     categories: Category[];
     monthlyNotesFolder: string;
     showChartsInNotes: boolean;
+    lastSeenVersion?: string;
 }
 
 export const defaultSettings: TimeTrackerStatisticsSettings = {

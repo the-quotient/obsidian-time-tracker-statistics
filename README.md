@@ -186,3 +186,7 @@ To make the statistics meaningful, map your vault's tags to categories. The plug
 
 - **Simple Time Tracker**: Required for the underlying data and API.
 - **Dataview**: Required for the plugin to scan and aggregate data.
+
+## Network Use
+
+After an update to a new major version (e.g. `2.0.0`), the plugin fetches that release's notes once from the GitHub API (`api.github.com`) to show them in a notice. No other data is sent or received.

@@ -1,6 +1,10 @@
 import {
+    Component,
     MarkdownRenderChild,
+    MarkdownRenderer,
+    Notice,
     Plugin,
+    requestUrl,
     MarkdownPostProcessorContext,
     Editor
 } from "obsidian";
@@ -14,10 +18,16 @@ import {
 } from "./statistics";
 import { PERIODS, PeriodType, StatisticsDashboardModal } from "./dashboard";
 
+const README_URL =
+    "https://github.com/the-quotient/obsidian-time-tracker-statistics#readme";
+const RELEASES_API_URL =
+    "https://api.github.com/repos/the-quotient/obsidian-time-tracker-statistics/releases";
+
 export default class TimeTrackerStatisticsPlugin extends Plugin {
     settings: TimeTrackerStatisticsSettings;
 
     async onload(): Promise<void> {
+        const isFreshInstall = (await this.loadData()) === null;
         await this.loadSettings();
 
         this.addSettingTab(
@@ -169,6 +179,60 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
                 editor.replaceSelection(block);
             }
         });
+
+        this.app.workspace.onLayoutReady(() => {
+            void this.showUpdateNotice(isFreshInstall);
+        });
+    }
+
+    private async showUpdateNotice(isFreshInstall: boolean): Promise<void> {
+        const currentVersion = this.manifest.version;
+        if (this.settings.lastSeenVersion === currentVersion) return;
+
+        // Versions before 2.0.0 did not store lastSeenVersion
+        const previousVersion = this.settings.lastSeenVersion ?? "1.0.0";
+        const majorOf = (version: string): number =>
+            parseInt(version.split(".")[0] ?? "0", 10);
+
+        if (!isFreshInstall && majorOf(currentVersion) > majorOf(previousVersion)) {
+            const fragment = document.createDocumentFragment();
+            fragment.createEl("strong", {
+                text: `Time Tracker Statistics ${currentVersion}: new features have arrived!`
+            });
+
+            const releaseNotes = await this.fetchReleaseNotes(currentVersion);
+            if (releaseNotes) {
+                const notesEl = fragment.createDiv();
+                const component = new Component();
+                component.load();
+                await MarkdownRenderer.render(
+                    this.app, releaseNotes, notesEl, "", component
+                );
+                component.unload();
+            }
+
+            const linkEl = fragment.createDiv();
+            linkEl.createEl("a", {
+                text: "Check out the readme for details",
+                href: README_URL
+            });
+            new Notice(fragment, 0);
+        }
+
+        this.settings.lastSeenVersion = currentVersion;
+        await this.saveSettings();
+    }
+
+    private async fetchReleaseNotes(version: string): Promise<string | null> {
+        try {
+            const response = await requestUrl({
+                url: `${RELEASES_API_URL}/tags/${version}`
+            });
+            const body = (response.json as { body?: string }).body;
+            return body?.trim() || null;
+        } catch {
+            return null;
+        }
     }
 
     openDashboard(period?: PeriodType, anchor?: Date): void {
