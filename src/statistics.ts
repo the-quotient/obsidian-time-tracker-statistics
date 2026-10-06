@@ -534,7 +534,7 @@ async function renderCharts(
         renderHeatmapCard(chartsEl, options);
         renderChartGrid(chartsEl, options);
     };
-    draw("category");
+    draw("note");
 }
 
 function getDayLabel(label: string, dayType: DayOffType | null): string {

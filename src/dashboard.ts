@@ -57,7 +57,7 @@ export class StatisticsDashboardModal extends Modal {
     private api: STT_API | null = null;
     private period: PeriodType = "day";
     private anchor: Date = startOfDay(new Date());
-    private distributionMode: DistributionMode = "category";
+    private distributionMode: DistributionMode = "note";
     private pages: PageTrackers[] = [];
     private entries: TrackedEntry[] = [];
     private carryOvers = new Map<string, Promise<number>>();
