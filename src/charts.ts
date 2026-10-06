@@ -1,6 +1,9 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HOUR = 3600000;
 const HEAT_LEVELS = 5;
+const DEFAULT_BAR_CHART_WIDTH = 640;
+const MIN_BAR_CHART_WIDTH = 240;
+const MIN_LABEL_SPACING = 26;
 
 export interface ChartSeries {
     key: string;
@@ -158,9 +161,40 @@ export function renderStackedBarChart(
     parent: HTMLElement,
     options: BarChartOptions
 ): void {
+    const wrapper = parent.createDiv({ cls: "stt-bar-chart" });
+    let drawnWidth = 0;
+    const draw = (availableWidth: number) => {
+        // Draw at the rendered width so labels keep their size in narrow
+        // panes such as the sidebar
+        const width = Math.max(MIN_BAR_CHART_WIDTH, Math.round(availableWidth));
+        if (width === drawnWidth) return;
+        drawnWidth = width;
+        options.tooltip.hide();
+        wrapper.empty();
+        drawStackedBarChart(wrapper, options, width);
+    };
+    draw(wrapper.clientWidth || DEFAULT_BAR_CHART_WIDTH);
+
+    const observer = new ResizeObserver(entries => {
+        const width = entries[0]?.contentRect.width ?? 0;
+        if (width > 0) draw(width);
+    });
+    observer.observe(wrapper);
+
+    if (options.bars.some(bar => bar.target && bar.target > 0)) {
+        const legend = parent.createDiv({ cls: "stt-chart-note" });
+        legend.createSpan({ cls: "stt-target-swatch" });
+        legend.createSpan({ text: "Target" });
+    }
+}
+
+function drawStackedBarChart(
+    parent: HTMLElement,
+    options: BarChartOptions,
+    width: number
+): void {
     const { series, bars, tooltip, format } = options;
-    const width = 640;
-    const height = 240;
+    const height = width < 420 ? 200 : 240;
     const margin = { top: 10, right: 8, bottom: 24, left: 40 };
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
@@ -194,7 +228,11 @@ export function renderStackedBarChart(
 
     const band = plotWidth / Math.max(bars.length, 1);
     const barWidth = Math.min(28, Math.max(band * 0.7, 2));
-    const labelEvery = Math.ceil(bars.length / (options.maxLabels ?? 16));
+    const maxLabels = Math.max(1, Math.min(
+        options.maxLabels ?? 16,
+        Math.floor(plotWidth / MIN_LABEL_SPACING)
+    ));
+    const labelEvery = Math.ceil(bars.length / maxLabels);
 
     bars.forEach((bar, index) => {
         const x = margin.left + index * band;
@@ -249,12 +287,6 @@ export function renderStackedBarChart(
         }
         bindTooltip(group, tooltip, bar.title, lines, bar.onClick);
     });
-
-    if (bars.some(bar => bar.target && bar.target > 0)) {
-        const legend = parent.createDiv({ cls: "stt-chart-note" });
-        legend.createSpan({ cls: "stt-target-swatch" });
-        legend.createSpan({ text: "Target" });
-    }
 }
 
 export interface DonutSlice {
@@ -401,7 +433,8 @@ export function renderHeatmap(
 
     const wrapper = parent.createDiv({ cls: "stt-heatmap" });
     const svg = createSvgRoot(wrapper, width, height, options.ariaLabel);
-    svg.setAttribute("width", String(width));
+    // Shrinks to fit narrow panes, scrolls once it would get too small
+    svg.setCssProps({ "--stt-heatmap-width": `${width}px` });
 
     rowLabels.forEach((label, row) => {
         if (!label) return;

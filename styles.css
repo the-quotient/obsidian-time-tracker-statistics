@@ -36,6 +36,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    container-type: inline-size;
 }
 
 .theme-dark .stt-dashboard {
@@ -172,6 +173,7 @@
 
 .stt-card-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
@@ -188,9 +190,30 @@
     gap: 12px;
 }
 
-@media (max-width: 760px) {
+/* Stack the charts in narrow panes, e.g. a note opened in the sidebar */
+@container (max-width: 640px) {
     .stt-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@container (max-width: 400px) {
+    .stt-tile,
+    .stt-card {
+        padding: 8px;
+    }
+
+    .stt-donut {
+        justify-content: center;
+    }
+
+    .stt-donut-svg {
+        width: 150px;
+    }
+
+    .stt-donut-legend {
+        flex-basis: 100%;
+        min-width: 0;
     }
 }
 
@@ -340,8 +363,9 @@
 }
 
 .stt-heatmap .stt-chart-svg {
-    width: auto;
-    max-width: none;
+    width: var(--stt-heatmap-width);
+    max-width: 100%;
+    min-width: calc(var(--stt-heatmap-width) * 0.6);
 }
 
 .stt-heat-cell {
