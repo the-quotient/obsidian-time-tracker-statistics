@@ -29,7 +29,7 @@ Provides a summary of all time tracked for a specific calendar day.
 **Includes:**
 
 - **Running Tracker**: Displays a link to any active tracker found in the vault.
-- **Totals Table**: Duration, remaining time and overtime per category based on your set targets. On weekends and on days marked as off, vacation or sick, there is no target, so all work time counts as overtime.
+- **Totals Table**: Duration, remaining time and overtime per category based on your set targets, and the deviation. On weekends and on days marked as off, vacation or sick, there is no target, so all work time counts as overtime. With the [daily target period](#daily-target-period) set to *Week so far*, a *Week so far* column is added and remaining time, overtime and deviation cover the week up to that day.
 - **Entries Breakdown**: A detailed list of every entry, showing the source file and sub-entry hierarchy.
 
 <img width="774" alt="Daily statistics code block" src="docs/images/note-day.png" />
@@ -171,12 +171,12 @@ To make the statistics meaningful, map your vault's tags to categories. The plug
 
 1. **Define a Category**: Give it a name.
 2. **Assign Tags**: Add the tags you use to indicate the files associated with the category. By default, **Work** looks for `#work` and **Leisure** looks for `#leisure`. Notes without a matching tag are grouped as **Other**.
-3. **Set Targets**: Enter a daily target in `HH:mm:ss` format. If left blank, the target defaults to `00:00:00`.
-4. **Work Tracking**: Every category with a target above `00:00:00` counts as work. The daily target is the sum of these targets. Categories without a target are shown as "Other duration".
+3. **Set Targets**: Enter a target in `HH:mm:ss` format and choose whether it applies **per day** or **per week**. If left blank, the target defaults to `00:00:00`. A weekly target is spread evenly over the five weekdays, so `20:00:00` per week equals `04:00:00` per day, and a day off, vacation or sick day reduces the week by one fifth.
+4. **Work Tracking**: Every category with a target above `00:00:00` counts as work, and so does a category without a target that fills other targets (see [Target Rules](#target-rules)). The daily target is the sum of these targets. All other categories are shown as "Other duration".
 
 ### Target Rules
 
-Turn on **Target rules** to let the time of one category fill the target of other categories. The option is off by default and hides the rules; turning it off again ignores them without deleting them. Rules can only be set between categories with a target.
+Turn on **Target rules** to let the time of one category fill the target of other categories. The option is off by default and hides the rules; turning it off again ignores them without deleting them. A category can only fill categories with a target, but it doesn't need a target itself.
 
 For each category, choose the categories it fills. Its time first fills their remaining target, in the chosen order, and only the time left counts for its own target. Example with the categories **Duty** (`#work/duty`, target `04:00:00`) and **Qualification** (`#work/qualification`, target `04:00:00`), where *Qualification fills Duty*:
 
@@ -186,7 +186,13 @@ For each category, choose the categories it fills. Its time first fills their re
 |4h|5h|full|1h overtime|
 |5h|2h|1h overtime|2h remaining|
 
-So duty only gets overtime from duty time, and qualification only once both targets are full. Recording more duty later moves the qualification time back to its own target. The rules change the remaining time and overtime per category in the daily statistics; the daily target and the deviation stay the same, since they count all work time together.
+So duty only gets overtime from duty time, and qualification only once both targets are full.
+
+A category **without a target** that fills others, e.g. **Tool development** filling *Duty, then Qualification*, has no target of its own: its time reduces the remaining target of the categories it fills, and only the time left after they are full counts as overtime. Such a category counts as work time. Recording more duty later moves the qualification time back to its own target. The rules change the remaining time and overtime per category in the daily statistics; the daily target and the deviation stay the same, since they count all work time together.
+
+### Daily Target Period
+
+By default, the remaining time, overtime and deviation in the daily statistics only cover that day. Set **Daily target period** to *Week so far* to calculate them from the first day of the week up to that day instead. The target is the daily target times the target days of the week so far, and the target rules are applied to the time of the whole week so far. This suits targets that only need to balance out over the week, e.g. duty on some days and qualification on others. Combined with weekly category targets, e.g. `20:00:00` duty and `20:00:00` qualification per week, the daily statistics on Friday compare the week with the full 20 hours each. The *Target* and *Deviation* tiles of the dashboard's Day view follow the same setting.
 
 ### Other Settings
 
@@ -196,6 +202,7 @@ So duty only gets overtime from duty time, and qualification only once both targ
 |**Monthly notes folder**|Vault root|Where the dashboard creates new monthly notes. Existing monthly notes are found anywhere in the vault.|
 |**Show charts in notes**|Off|Adds the dashboard charts below the tables of the code blocks.|
 |**Target rules**|Off|Shows the [target rules](#target-rules) and applies them.|
+|**Daily target period**|Day|Whether the [daily statistics](#daily-target-period) compare a day with its own target or the week so far with its target.|
 
 ## Prerequisites
 

@@ -9,6 +9,7 @@ import {
     getSTTApi,
     loadPageTrackers,
     collectTrackedEntries,
+    getCategories,
     getDailyTarget
 } from "./statistics";
 import {
@@ -33,6 +34,7 @@ import {
     getPeriodRange,
     getSeries,
     getWeekNumber,
+    getWeekToDateRange,
     isSameMonth,
     pad,
     renderChartGrid,
@@ -50,6 +52,12 @@ interface DashboardWorkspace {
         sourcePath: string,
         newLeaf?: boolean
     ): Promise<void>;
+}
+
+interface TargetBalance {
+    work: number;
+    target: number;
+    hint?: string;
 }
 
 export class StatisticsDashboardModal extends Modal {
@@ -215,7 +223,7 @@ export class StatisticsDashboardModal extends Modal {
             this.pages = pages;
             this.entries = collectTrackedEntries(
                 pages,
-                this.plugin.settings.categories,
+                getCategories(this.plugin.settings),
                 api
             );
             const runningPage = pages.find(page =>
@@ -335,7 +343,7 @@ export class StatisticsDashboardModal extends Modal {
 
         await this.months.load(range.days);
         if (token !== this.renderToken) return;
-        const categories = this.plugin.settings.categories;
+        const categories = getCategories(this.plugin.settings);
         const dayTargets = this.months.getDayTargets(range.days, categories);
         const stats = computePeriodStats(
             this.entries,
@@ -346,6 +354,7 @@ export class StatisticsDashboardModal extends Modal {
         const accumulated = getDailyTarget(categories) > 0
             ? await this.getAccumulatedDeviation(range, stats)
             : null;
+        const balance = await this.getTargetBalance(range, stats);
         if (token !== this.renderToken) return;
         const series = getSeries(categories, stats);
         const chartOptions: PeriodChartsOptions = {
@@ -369,7 +378,7 @@ export class StatisticsDashboardModal extends Modal {
 
         this.tooltip.hide();
         this.bodyEl.empty();
-        this.renderTiles(stats, range, accumulated);
+        this.renderTiles(stats, range, balance, accumulated);
         if (this.period === "day") this.renderDayTypeCard(range.start);
 
         renderHeatmapCard(this.bodyEl, chartOptions);
@@ -429,7 +438,7 @@ export class StatisticsDashboardModal extends Modal {
         let deviation = await this.getCarryOver(monthStart) +
             stats.work - stats.target;
         if (monthStart < range.start) {
-            const categories = this.plugin.settings.categories;
+            const categories = getCategories(this.plugin.settings);
             const days = getPeriodRange(
                 "month",
                 monthStart,
@@ -446,9 +455,42 @@ export class StatisticsDashboardModal extends Modal {
         return deviation;
     }
 
+    /**
+     * Work and target the target and deviation tiles compare: those of the
+     * period, or of the week so far for a day if set in the settings.
+     */
+    private async getTargetBalance(
+        range: PeriodRange,
+        stats: PeriodStats
+    ): Promise<TargetBalance> {
+        const settings = this.plugin.settings;
+        if (this.period !== "day" || settings.targetPeriod !== "week") {
+            return {
+                work: stats.work,
+                target: stats.target,
+                hint: stats.targetIsPartial ? "Up to today" : undefined
+            };
+        }
+        const categories = getCategories(settings);
+        const week = getWeekToDateRange(range.start, settings.firstDayOfWeek);
+        await this.months.load(week.days);
+        const weekStats = computePeriodStats(
+            this.entries,
+            categories,
+            week,
+            this.months.getDayTargets(week.days, categories)
+        );
+        return {
+            work: weekStats.work,
+            target: weekStats.target,
+            hint: "Week so far"
+        };
+    }
+
     private renderTiles(
         stats: PeriodStats,
         range: PeriodRange,
+        balance: TargetBalance,
         accumulated: number | null
     ): void {
         const tiles = this.bodyEl.createDiv({ cls: "stt-tiles" });
@@ -462,15 +504,11 @@ export class StatisticsDashboardModal extends Modal {
         addTile("Total tracked", this.format(stats.total));
         if (accumulated !== null) {
             addTile("Work", this.format(stats.work));
-            addTile(
-                "Target",
-                this.format(stats.target),
-                stats.targetIsPartial ? "Up to today" : undefined
-            );
+            addTile("Target", this.format(balance.target), balance.hint);
             addTile(
                 "Deviation",
-                this.formatSigned(stats.work - stats.target),
-                stats.targetIsPartial ? "Up to today" : undefined
+                this.formatSigned(balance.work - balance.target),
+                balance.hint
             );
             addTile(
                 "Accumulated deviation",

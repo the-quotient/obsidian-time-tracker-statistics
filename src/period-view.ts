@@ -126,6 +126,16 @@ export function getPeriodRange(
     return { start, end, days: daysBetween(start, end) };
 }
 
+/** The days of the week of `day` up to and including `day`. */
+export function getWeekToDateRange(
+    day: Date,
+    firstDayOfWeek: number
+): PeriodRange {
+    const start = startOfWeek(startOfDay(day), firstDayOfWeek);
+    const end = startOfDay(day);
+    return { start, end, days: daysBetween(start, end) };
+}
+
 export function getWeekNumber(date: Date, firstDayOfWeek: number): number {
     const m = toMoment(date);
     return firstDayOfWeek === 1 ? m.isoWeek() : m.locale("en").week();

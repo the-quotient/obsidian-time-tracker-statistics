@@ -7,7 +7,7 @@ import {
 } from "obsidian";
 import { getAPI } from "obsidian-dataview";
 import TimeTrackerStatisticsPlugin from "./main";
-import { Category } from "./settings";
+import { Category, TimeTrackerStatisticsSettings } from "./settings";
 import {
     CategoryBalance,
     computeCategoryBalances
@@ -35,6 +35,7 @@ import {
     getPeriodRange,
     getSeries,
     getWeekStart,
+    getWeekToDateRange,
     renderChartGrid,
     renderHeatmapCard,
     toDateKey
@@ -183,30 +184,55 @@ export function parseTargetTime(target: string): number {
     return safeMoment.duration(target).asMilliseconds();
 }
 
+const TARGET_DAYS_PER_WEEK = 5;
+
+/** Target of a category per target day; weekly targets are spread evenly. */
+export function getCategoryTarget(category: Category): number {
+    const target = parseTargetTime(category.target);
+    return category.targetPeriod === "week"
+        ? Math.round(target / TARGET_DAYS_PER_WEEK)
+        : target;
+}
+
+/**
+ * Categories with a target count as work, and so do categories without one
+ * that fill the target of others.
+ */
 export function isWorkCategory(category: Category): boolean {
-    return parseTargetTime(category.target) > 0;
+    return getCategoryTarget(category) > 0 ||
+        (category.fills?.length ?? 0) > 0;
 }
 
 export function getDailyTarget(categories: Category[]): number {
     return categories
         .filter(isWorkCategory)
-        .reduce((total, c) => total + parseTargetTime(c.target), 0);
+        .reduce((total, c) => total + getCategoryTarget(c), 0);
+}
+
+/** The categories of the settings, without fill rules if turned off. */
+export function getCategories(
+    settings: TimeTrackerStatisticsSettings
+): Category[] {
+    if (settings.targetRules) return settings.categories;
+    return settings.categories.map(category => ({
+        ...category,
+        fills: []
+    }));
 }
 
 /**
- * Remaining time and overtime per work category on one day. Fill rules
- * only apply if they are turned on in the settings.
+ * Remaining time and overtime per work category over `targetDays` target
+ * days.
  */
 export function getCategoryBalances(
     categories: Category[],
-    useFillRules: boolean,
-    isTarget: boolean,
+    targetDays: number,
     tracked: Map<string, number>
 ): Map<string, CategoryBalance> {
     const rules = categories.filter(isWorkCategory).map(category => ({
         name: category.name,
-        target: isTarget ? parseTargetTime(category.target) : 0,
-        fills: useFillRules ? category.fills ?? [] : []
+        target: getCategoryTarget(category) * targetDays,
+        fills: category.fills ?? []
     }));
     return computeCategoryBalances(rules, tracked);
 }
@@ -356,7 +382,7 @@ export function getWorkingTimeMap(
     const resultMap = new Map<string, WorkingTimeResult>();
     const entries = collectTrackedEntries(
         pages,
-        plugin.settings.categories,
+        getCategories(plugin.settings),
         api
     );
 
@@ -518,7 +544,7 @@ async function renderCharts(
     const { plugin, api, tooltip } = context;
     if (!plugin.settings.showChartsInNotes) return;
 
-    const categories = plugin.settings.categories;
+    const categories = getCategories(plugin.settings);
     const firstDayOfWeek = plugin.settings.firstDayOfWeek;
     const range = getPeriodRange(period, anchor, firstDayOfWeek);
     const months = new MonthConfigCache(plugin.app);
@@ -577,7 +603,7 @@ function buildDayRow(
 ): DayRow {
     const { workDuration, otherDuration } = getDayWorkAndOther(
         workingTime,
-        plugin.settings.categories
+        getCategories(plugin.settings)
     );
     return {
         cells: [
@@ -675,6 +701,13 @@ async function renderDayReport(
     }
     const [year, month, dayOfMonth] = date.split("-").map(Number);
     const day = new Date(year ?? 0, (month ?? 1) - 1, dayOfMonth ?? 1);
+    const categories = getCategories(plugin.settings);
+    const showTargetColumns = categories.some(isWorkCategory);
+    const weekly = showTargetColumns &&
+        plugin.settings.targetPeriod === "week";
+    const balanceRange = weekly
+        ? getWeekToDateRange(day, plugin.settings.firstDayOfWeek)
+        : getPeriodRange("day", day, plugin.settings.firstDayOfWeek);
 
     const pages = await loadPageTrackers(
         context.dataviewApi,
@@ -682,14 +715,26 @@ async function renderDayReport(
         api
     );
     const months = new MonthConfigCache(plugin.app);
-    await months.load([day]);
+    await months.load(balanceRange.days);
     const isTarget = months.isTargetDay(day);
     const dayType = months.getDayType(day);
+    const targetDays = balanceRange.days
+        .filter(d => months.isTargetDay(d)).length;
 
-    const resultMap = getWorkingTimeMap(pages, plugin, api, date, date);
+    const resultMap = getWorkingTimeMap(
+        pages,
+        plugin,
+        api,
+        toDateKey(balanceRange.start),
+        date
+    );
     const workingTime = resultMap.get(date) || createEmptyResult();
-    const categories = plugin.settings.categories;
-    const showTargetColumns = categories.some(isWorkCategory);
+    const dayTotals = getCategoryTotals([workingTime]);
+    const balanceTotals = weekly
+        ? getCategoryTotals(resultMap.values())
+        : dayTotals;
+    const balanceTotal = Array.from(balanceTotals.values())
+        .reduce((total, time) => total + time, 0);
 
     let dailyReportMd = "";
     if (showTargetColumns && !isTarget) {
@@ -698,24 +743,23 @@ async function renderDayReport(
     }
 
     if (workingTime.totalDuration === 0) {
-        dailyReportMd += "_No tracked time found for this day._";
-    } else {
-        const categoryTotals = new Map<string, number>();
-        if (isTarget) {
+        dailyReportMd += "_No tracked time found for this day._\n\n";
+    }
+
+    if (balanceTotal > 0) {
+        const categoryNames = new Set<string>();
+        if (targetDays > 0) {
             for (const category of categories.filter(isWorkCategory)) {
-                categoryTotals.set(category.name, 0);
+                categoryNames.add(category.name);
             }
         }
-        workingTime.entryDurations.forEach((dur, i) => {
-            const category = workingTime.fileCategories[i] || "Unknown";
-            categoryTotals.set(
-                category,
-                (categoryTotals.get(category) ?? 0) + dur
-            );
-        });
+        for (const name of balanceTotals.keys()) categoryNames.add(name);
 
         let totalsTable = `| Category | Duration |`;
-        if (showTargetColumns) {
+        if (weekly) {
+            totalsTable += ` Week so far | Remaining | Overtime |\n`;
+            totalsTable += `|:---|:---|:---|:---|:---|\n`;
+        } else if (showTargetColumns) {
             totalsTable += ` Remaining | Overtime |\n`;
             totalsTable += `|:---|:---|:---|:---|\n`;
         } else {
@@ -724,13 +768,15 @@ async function renderDayReport(
 
         const balances = getCategoryBalances(
             categories,
-            plugin.settings.targetRules,
-            isTarget,
-            categoryTotals
+            targetDays,
+            balanceTotals
         );
 
-        for (const [categoryName, trackedDur] of categoryTotals) {
+        let work = 0;
+        for (const categoryName of categoryNames) {
             const balance = balances.get(categoryName);
+            const balanceDur = balanceTotals.get(categoryName) ?? 0;
+            if (balance) work += balanceDur;
             let remainingStr = "";
             let overtimeStr = "";
             if (balance?.remaining) {
@@ -741,8 +787,13 @@ async function renderDayReport(
             }
 
             const escName = escapeMarkdown(categoryName);
-            let durFmt = api.formatDuration(trackedDur);
-            if (balance) durFmt += getFillNote(api, balance);
+            const fillNote = balance ? getFillNote(api, balance) : "";
+            let durFmt = api.formatDuration(dayTotals.get(categoryName) ?? 0);
+            if (weekly) {
+                durFmt += ` | ${api.formatDuration(balanceDur)}${fillNote}`;
+            } else {
+                durFmt += fillNote;
+            }
             totalsTable += `| **${escName}** | ${durFmt} |`;
 
             if (showTargetColumns) {
@@ -755,10 +806,22 @@ async function renderDayReport(
         totalsTable += `| **Total** | `;
         const tDur = api.formatDuration(workingTime.totalDuration);
         totalsTable += `**${tDur}** |`;
+        if (weekly) {
+            totalsTable += ` **${api.formatDuration(balanceTotal)}** |`;
+        }
         if (showTargetColumns) {
-            totalsTable += ` | |`;
+            totalsTable += ` | |\n`;
+            const deviation = work - getDailyTarget(categories) * targetDays;
+            totalsTable += weekly
+                ? `| **Deviation** | | `
+                : `| **Deviation** | `;
+            totalsTable += `**${formatSigned(api, deviation)}** | | |`;
         }
 
+        dailyReportMd += `#### Totals\n\n${totalsTable}\n\n`;
+    }
+
+    if (workingTime.totalDuration > 0) {
         let breakdownTable = `| Category | Entry | Duration |\n`;
         breakdownTable += `|:---|:---|:---|\n`;
 
@@ -778,7 +841,6 @@ async function renderDayReport(
             breakdownTable += `| ${durStr} |\n`;
         });
 
-        dailyReportMd += `#### Totals\n\n${totalsTable}\n\n`;
         dailyReportMd += `#### Entries breakdown\n\n${breakdownTable}`;
     }
 
@@ -789,6 +851,19 @@ async function renderDayReport(
         `${runningTrackerMd}\n${dailyReportMd}`
     );
     await renderCharts(container, context, pages, "day", day);
+}
+
+function getCategoryTotals(
+    results: Iterable<WorkingTimeResult>
+): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const result of results) {
+        result.entryDurations.forEach((duration, i) => {
+            const category = result.fileCategories[i] || "Unknown";
+            totals.set(category, (totals.get(category) ?? 0) + duration);
+        });
+    }
+    return totals;
 }
 
 /** Notes which part of the time filled the target of other categories. */
@@ -855,7 +930,7 @@ async function renderWeekReport(
     const months = new MonthConfigCache(plugin.app);
     await months.load(days);
     const dataMap = getWorkingTimeMap(pages, plugin, api, startKey, endKey);
-    const dailyTarget = getDailyTarget(plugin.settings.categories);
+    const dailyTarget = getDailyTarget(getCategories(plugin.settings));
 
     let target = 0;
     const rows = days.map(day => {
@@ -915,7 +990,7 @@ async function renderMonthReport(
         return;
     }
 
-    const dailyTarget = getDailyTarget(plugin.settings.categories);
+    const dailyTarget = getDailyTarget(getCategories(plugin.settings));
     const monthDetails = getMonthDetails(year, monthIndex);
     const monthRange = getMonthRange(year, monthIndex);
     if (!monthDetails || !monthRange) throw new Error("Invalid month index");
@@ -1087,7 +1162,7 @@ async function renderYearReport(
         return;
     }
 
-    const categories = plugin.settings.categories;
+    const categories = getCategories(plugin.settings);
     const dailyTarget = getDailyTarget(categories);
     const { days } = getPeriodRange(
         "year",

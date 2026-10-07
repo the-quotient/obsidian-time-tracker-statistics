@@ -9,7 +9,7 @@ import {
 } from "obsidian";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
-import { isWorkCategory } from "./statistics";
+import { getCategoryTarget } from "./statistics";
 
 interface SafeSetting {
     setName(name: string): SafeSetting;
@@ -74,6 +74,17 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                                 await this.plugin.saveSettings();
                             });
                     })
+                    .addDropdown((dropdown: DropdownComponent) => {
+                        dropdown
+                            .addOption('day', 'Per day')
+                            .addOption('week', 'Per week')
+                            .setValue(category.targetPeriod ?? 'day')
+                            .onChange(async (value: string) => {
+                                category.targetPeriod =
+                                    value === 'week' ? 'week' : 'day';
+                                await this.plugin.saveSettings();
+                            });
+                    })
                     .addButton((button: ButtonComponent) => {
                         button.setButtonText("Remove")
                             .onClick(async () => {
@@ -120,6 +131,23 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
         }
 
         new SafeSettingClass(container)
+            .setName('Daily target period')
+            .setDesc('What the remaining time, overtime and deviation of a ' +
+                'single day are based on: that day only, or the week so ' +
+                'far, from the first day of the week up to that day.')
+            .addDropdown((dropdown: DropdownComponent) => {
+                dropdown
+                    .addOption('day', 'Day')
+                    .addOption('week', 'Week so far')
+                    .setValue(this.plugin.settings.targetPeriod)
+                    .onChange(async (value: string) => {
+                        this.plugin.settings.targetPeriod =
+                            value === 'week' ? 'week' : 'day';
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new SafeSettingClass(container)
             .setName('First day of week')
             .setDesc('Set the first day of the week for calculations.')
             .addDropdown((dropdown: DropdownComponent) => {
@@ -161,29 +189,33 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
     }
 
     /**
-     * One row per work category to choose the categories whose remaining
-     * target it fills before its own.
+     * One row per category to choose the categories with a target whose
+     * remaining target it fills before its own.
      */
     private displayTargetRules(container: HTMLElement): void {
-        const workCategories = this.plugin.settings.categories
-            .filter(category => category.name && isWorkCategory(category));
+        const categories = this.plugin.settings.categories
+            .filter(category => category.name);
+        const targetCategories = categories
+            .filter(category => getCategoryTarget(category) > 0);
 
-        if (workCategories.length < 2) {
+        if (targetCategories.length === 0 || categories.length < 2) {
             new SafeSettingClass(container)
-                .setDesc('Target rules need at least two categories ' +
-                    'with a target.');
+                .setDesc('Target rules need at least two categories, ' +
+                    'one of them with a target.');
             return;
         }
 
-        for (const category of workCategories) {
+        for (const category of categories) {
             const fills = category.fills ?? [];
+            const hasTarget = getCategoryTarget(category) > 0;
+            const options = targetCategories.filter(other =>
+                other !== category && !fills.includes(other.name));
+            if (fills.length === 0 && options.length === 0) continue;
+
             const setting = new SafeSettingClass(container)
                 .setName(`${category.name} fills`)
-                .setDesc(fills.length
-                    ? `Time of ${category.name} first fills the remaining ` +
-                    `target of ${fills.join(", then ")}. Only the time ` +
-                    `left counts for ${category.name} itself.`
-                    : `Time of ${category.name} only counts for itself.`);
+                .setDesc(this.getFillDescription(category.name, fills,
+                    hasTarget));
 
             for (const name of fills) {
                 setting.addButton((button: ButtonComponent) => {
@@ -197,8 +229,6 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                 });
             }
 
-            const options = workCategories.filter(other =>
-                other !== category && !fills.includes(other.name));
             if (options.length === 0) continue;
             setting.addDropdown((dropdown: DropdownComponent) => {
                 dropdown.addOption("", "Add category…");
@@ -213,6 +243,23 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                 });
             });
         }
+    }
+
+    private getFillDescription(
+        name: string,
+        fills: string[],
+        hasTarget: boolean
+    ): string {
+        if (fills.length === 0) {
+            return hasTarget
+                ? `Time of ${name} only counts for itself.`
+                : `${name} has no target and counts as other time.`;
+        }
+        return `Time of ${name} first fills the remaining target of ` +
+            `${fills.join(", then ")}. ` +
+            (hasTarget
+                ? `Only the time left counts for ${name} itself.`
+                : `${name} counts as work; the time left is overtime.`);
     }
 
     private renameFillTarget(oldName: string, newName: string | null): void {

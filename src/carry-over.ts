@@ -6,6 +6,7 @@ import {
     PageTrackers,
     WorkingTimeResult,
     getWorkingTimeMap,
+    getCategories,
     getDailyTarget,
     isWorkCategory,
     extractYear,
@@ -404,7 +405,7 @@ export async function resolveCarryOver(
     for (const link of chain) {
         deviation = computeMonthDeviation(
             dataMap,
-            plugin.settings.categories,
+            getCategories(plugin.settings),
             link.year,
             link.monthIndex,
             link.config,
