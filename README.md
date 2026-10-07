@@ -174,6 +174,20 @@ To make the statistics meaningful, map your vault's tags to categories. The plug
 3. **Set Targets**: Enter a daily target in `HH:mm:ss` format. If left blank, the target defaults to `00:00:00`.
 4. **Work Tracking**: Every category with a target above `00:00:00` counts as work. The daily target is the sum of these targets. Categories without a target are shown as "Other duration".
 
+### Target Rules
+
+Turn on **Target rules** to let the time of one category fill the target of other categories. The option is off by default and hides the rules; turning it off again ignores them without deleting them. Rules can only be set between categories with a target.
+
+For each category, choose the categories it fills. Its time first fills their remaining target, in the chosen order, and only the time left counts for its own target. Example with the categories **Duty** (`#work/duty`, target `04:00:00`) and **Qualification** (`#work/qualification`, target `04:00:00`), where *Qualification fills Duty*:
+
+|Tracked duty|Tracked qualification|Duty|Qualification|
+|---|---|---|---|
+|2h|5h|full (2h filled by qualification)|1h remaining|
+|4h|5h|full|1h overtime|
+|5h|2h|1h overtime|2h remaining|
+
+So duty only gets overtime from duty time, and qualification only once both targets are full. Recording more duty later moves the qualification time back to its own target. The rules change the remaining time and overtime per category in the daily statistics; the daily target and the deviation stay the same, since they count all work time together.
+
 ### Other Settings
 
 |Setting|Default|Description|
@@ -181,6 +195,7 @@ To make the statistics meaningful, map your vault's tags to categories. The plug
 |**First day of week**|Monday|Start of the week in the weekly reports and the dashboard. Also decides how weeks are numbered (ISO or US).|
 |**Monthly notes folder**|Vault root|Where the dashboard creates new monthly notes. Existing monthly notes are found anywhere in the vault.|
 |**Show charts in notes**|Off|Adds the dashboard charts below the tables of the code blocks.|
+|**Target rules**|Off|Shows the [target rules](#target-rules) and applies them.|
 
 ## Prerequisites
 

@@ -9,6 +9,10 @@ import { getAPI } from "obsidian-dataview";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
 import {
+    CategoryBalance,
+    computeCategoryBalances
+} from "./target-rules";
+import {
     MonthConfig,
     CarryOverResult,
     DayOffType,
@@ -187,6 +191,24 @@ export function getDailyTarget(categories: Category[]): number {
     return categories
         .filter(isWorkCategory)
         .reduce((total, c) => total + parseTargetTime(c.target), 0);
+}
+
+/**
+ * Remaining time and overtime per work category on one day. Fill rules
+ * only apply if they are turned on in the settings.
+ */
+export function getCategoryBalances(
+    categories: Category[],
+    useFillRules: boolean,
+    isTarget: boolean,
+    tracked: Map<string, number>
+): Map<string, CategoryBalance> {
+    const rules = categories.filter(isWorkCategory).map(category => ({
+        name: category.name,
+        target: isTarget ? parseTargetTime(category.target) : 0,
+        fills: useFillRules ? category.fills ?? [] : []
+    }));
+    return computeCategoryBalances(rules, tracked);
 }
 
 export function extractYear(inputString: string): number | null {
@@ -700,24 +722,27 @@ async function renderDayReport(
             totalsTable += `\n|:---|:---|\n`;
         }
 
+        const balances = getCategoryBalances(
+            categories,
+            plugin.settings.targetRules,
+            isTarget,
+            categoryTotals
+        );
+
         for (const [categoryName, trackedDur] of categoryTotals) {
-            const category = categories.find(c => c.name === categoryName);
+            const balance = balances.get(categoryName);
             let remainingStr = "";
             let overtimeStr = "";
-
-            if (category && isWorkCategory(category)) {
-                const targetMs = isTarget
-                    ? parseTargetTime(category.target) : 0;
-                const diffMs = trackedDur - targetMs;
-                if (diffMs < 0) {
-                    remainingStr = api.formatDuration(-diffMs);
-                } else if (diffMs > 0) {
-                    overtimeStr = api.formatDuration(diffMs);
-                }
+            if (balance?.remaining) {
+                remainingStr = api.formatDuration(balance.remaining);
+            }
+            if (balance?.overtime) {
+                overtimeStr = api.formatDuration(balance.overtime);
             }
 
             const escName = escapeMarkdown(categoryName);
-            const durFmt = api.formatDuration(trackedDur);
+            let durFmt = api.formatDuration(trackedDur);
+            if (balance) durFmt += getFillNote(api, balance);
             totalsTable += `| **${escName}** | ${durFmt} |`;
 
             if (showTargetColumns) {
@@ -764,6 +789,18 @@ async function renderDayReport(
         `${runningTrackerMd}\n${dailyReportMd}`
     );
     await renderCharts(container, context, pages, "day", day);
+}
+
+/** Notes which part of the time filled the target of other categories. */
+function getFillNote(api: STT_API, balance: CategoryBalance): string {
+    const notes: string[] = [];
+    for (const [name, time] of balance.received) {
+        notes.push(`+${api.formatDuration(time)} from ${escapeMarkdown(name)}`);
+    }
+    for (const [name, time] of balance.given) {
+        notes.push(`-${api.formatDuration(time)} to ${escapeMarkdown(name)}`);
+    }
+    return notes.length ? ` (${notes.join(", ")})` : "";
 }
 
 export function displayStatisticsWeek(

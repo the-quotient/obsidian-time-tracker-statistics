@@ -9,6 +9,7 @@ import {
 } from "obsidian";
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
+import { isWorkCategory } from "./statistics";
 
 interface SafeSetting {
     setName(name: string): SafeSetting;
@@ -49,6 +50,7 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                         text.setPlaceholder("Category name")
                             .setValue(category.name)
                             .onChange(async (value: string) => {
+                                this.renameFillTarget(category.name, value);
                                 category.name = value;
                                 await this.plugin.saveSettings();
                             });
@@ -77,6 +79,7 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                             .onClick(async () => {
                                 this.plugin.settings.categories
                                     .splice(index, 1);
+                                this.renameFillTarget(category.name, null);
                                 await this.plugin.saveSettings();
                                 this.display();
                             });
@@ -97,6 +100,24 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                         this.display();
                     });
             });
+
+        new SafeSettingClass(container)
+            .setName('Target rules')
+            .setDesc('Lets the time of one category fill the target of ' +
+                'other categories. Turning this off ignores the rules ' +
+                'without deleting them.')
+            .addToggle((toggle: ToggleComponent) => {
+                toggle.setValue(this.plugin.settings.targetRules)
+                    .onChange(async (value: boolean) => {
+                        this.plugin.settings.targetRules = value;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    });
+            });
+
+        if (this.plugin.settings.targetRules) {
+            this.displayTargetRules(container);
+        }
 
         new SafeSettingClass(container)
             .setName('First day of week')
@@ -137,5 +158,69 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     });
             });
+    }
+
+    /**
+     * One row per work category to choose the categories whose remaining
+     * target it fills before its own.
+     */
+    private displayTargetRules(container: HTMLElement): void {
+        const workCategories = this.plugin.settings.categories
+            .filter(category => category.name && isWorkCategory(category));
+
+        if (workCategories.length < 2) {
+            new SafeSettingClass(container)
+                .setDesc('Target rules need at least two categories ' +
+                    'with a target.');
+            return;
+        }
+
+        for (const category of workCategories) {
+            const fills = category.fills ?? [];
+            const setting = new SafeSettingClass(container)
+                .setName(`${category.name} fills`)
+                .setDesc(fills.length
+                    ? `Time of ${category.name} first fills the remaining ` +
+                    `target of ${fills.join(", then ")}. Only the time ` +
+                    `left counts for ${category.name} itself.`
+                    : `Time of ${category.name} only counts for itself.`);
+
+            for (const name of fills) {
+                setting.addButton((button: ButtonComponent) => {
+                    button.setButtonText(`${name} ×`)
+                        .setTooltip(`Stop filling ${name}`)
+                        .onClick(async () => {
+                            category.fills = fills.filter(n => n !== name);
+                            await this.plugin.saveSettings();
+                            this.display();
+                        });
+                });
+            }
+
+            const options = workCategories.filter(other =>
+                other !== category && !fills.includes(other.name));
+            if (options.length === 0) continue;
+            setting.addDropdown((dropdown: DropdownComponent) => {
+                dropdown.addOption("", "Add category…");
+                for (const other of options) {
+                    dropdown.addOption(other.name, other.name);
+                }
+                dropdown.onChange(async (value: string) => {
+                    if (!value) return;
+                    category.fills = [...fills, value];
+                    await this.plugin.saveSettings();
+                    this.display();
+                });
+            });
+        }
+    }
+
+    private renameFillTarget(oldName: string, newName: string | null): void {
+        if (oldName === newName) return;
+        for (const category of this.plugin.settings.categories) {
+            if (!category.fills) continue;
+            category.fills = category.fills.flatMap(name =>
+                name !== oldName ? [name] : newName !== null ? [newName] : []);
+        }
     }
 }

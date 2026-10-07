@@ -2,6 +2,7 @@ export interface Category {
     name: string;
     tags: string[];
     target: string;
+    fills?: string[];
 }
 
 export interface TimeTrackerStatisticsSettings {
@@ -9,6 +10,7 @@ export interface TimeTrackerStatisticsSettings {
     categories: Category[];
     monthlyNotesFolder: string;
     showChartsInNotes: boolean;
+    targetRules: boolean;
     lastSeenVersion?: string;
 }
 
@@ -16,6 +18,7 @@ export const defaultSettings: TimeTrackerStatisticsSettings = {
     firstDayOfWeek: 1, //Monday
     monthlyNotesFolder: "",
     showChartsInNotes: false,
+    targetRules: false,
     categories: [
         {
             name: "Work",
