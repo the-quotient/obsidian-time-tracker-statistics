@@ -23,3 +23,5 @@ data.json
 
 # local tests
 test/
+
+/plan/
