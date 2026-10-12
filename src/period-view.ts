@@ -11,6 +11,7 @@ import {
     MonthConfig,
     MonthNote,
     findMonthNote,
+    getCountedTarget,
     getDayOffType,
     isTargetDay
 } from "./carry-over";
@@ -54,7 +55,7 @@ export interface PeriodStats {
     activeDays: number;
     byDay: Map<string, Map<string, number>>;
     byCategory: Map<string, number>;
-    byNote: Map<string, { name: string; duration: number }>;
+    byNote: Map<string, { name: string; duration: number; category: string }>;
     hourly: Map<string, number>;
 }
 
@@ -299,10 +300,6 @@ export function computePeriodStats(
         hourly: new Map()
     };
 
-    for (const [dateKey, target] of dayTargets) {
-        if (dateKey <= todayKey) stats.target += target;
-    }
-
     const hourlyStartKey = toDateKey(addDays(range.start, -1));
     for (const entry of entries) {
         if (entry.dateKey >= hourlyStartKey && entry.dateKey <= endKey) {
@@ -330,9 +327,17 @@ export function computePeriodStats(
         );
 
         const note = stats.byNote.get(entry.path) ??
-            { name: entry.pageName, duration: 0 };
+            { name: entry.pageName, duration: 0, category: entry.category };
         note.duration += entry.duration;
         stats.byNote.set(entry.path, note);
+    }
+
+    for (const [dateKey, target] of dayTargets) {
+        let work = 0;
+        for (const [category, duration] of stats.byDay.get(dateKey) ?? []) {
+            if (workCategories.has(category)) work += duration;
+        }
+        stats.target += getCountedTarget(dateKey, todayKey, target, work);
     }
 
     for (const day of stats.byDay.values()) {
@@ -662,10 +667,12 @@ function renderDistributionCard(
     } else {
         const notes = Array.from(stats.byNote.values())
             .sort((a, b) => b.duration - a.duration);
-        slices = notes.slice(0, MAX_NOTE_SLICES).map((note, i) => ({
+        // A note takes the colour of its category, as in the other charts
+        slices = notes.slice(0, MAX_NOTE_SLICES).map(note => ({
             label: note.name,
             value: note.duration,
-            colorClass: `stt-series-${i + 1}`
+            colorClass: series.find(s => s.key === note.category)
+                ?.colorClass ?? "stt-series-other"
         }));
         const rest = notes.slice(MAX_NOTE_SLICES)
             .reduce((sum, note) => sum + note.duration, 0);

@@ -13,10 +13,25 @@ export interface CategoryBalance {
     received: Map<string, number>;
 }
 
+/** Tracked time of one category, as one piece in the order it was tracked. */
+export interface TrackedPiece {
+    category: string;
+    duration: number;
+}
+
+/**
+ * Remaining time and overtime per category. Fillers give their time in the
+ * order it was tracked, so a target filled earlier is not taken over by time
+ * tracked later.
+ */
 export function computeCategoryBalances(
     rules: CategoryRule[],
-    tracked: Map<string, number>
+    pieces: TrackedPiece[]
 ): Map<string, CategoryBalance> {
+    const tracked = new Map<string, number>();
+    for (const { category, duration } of pieces) {
+        tracked.set(category, (tracked.get(category) ?? 0) + duration);
+    }
     const balances = new Map<string, CategoryBalance>();
     for (const rule of rules) {
         if (balances.has(rule.name)) continue;
@@ -41,8 +56,11 @@ export function computeCategoryBalances(
         }
     }
 
-    for (const { balance, rule } of fillers) {
-        let left = balance.tracked;
+    for (const { category, duration } of pieces) {
+        const filler = fillers.find(f => f.rule.name === category);
+        if (!filler) continue;
+        const { balance, rule } = filler;
+        let left = duration;
         for (const name of rule.fills) {
             const target = balances.get(name);
             if (!target || target === balance) continue;

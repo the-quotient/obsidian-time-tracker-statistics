@@ -182,6 +182,21 @@ export function isTargetDay(
         !config.sickDays.includes(day);
 }
 
+/**
+ * The part of a day's target that counts towards the deviation. Today's
+ * target counts only as far as it is met, since it can still be reached.
+ */
+export function getCountedTarget(
+    dateKey: string,
+    todayKey: string,
+    target: number,
+    work: number
+): number {
+    if (dateKey < todayKey) return target;
+    if (dateKey === todayKey) return Math.min(target, work);
+    return 0;
+}
+
 function computeMonthDeviation(
     dataMap: Map<string, WorkingTimeResult>,
     categories: Category[],
@@ -206,9 +221,10 @@ function computeMonthDeviation(
             categories
         );
         deviation += workDuration;
-        if (isTargetDay(year, monthIndex, day, config) &&
-            dateKey <= todayKey) {
-            deviation -= dailyTarget;
+        if (isTargetDay(year, monthIndex, day, config)) {
+            deviation -= getCountedTarget(
+                dateKey, todayKey, dailyTarget, workDuration
+            );
         }
     }
     return deviation;

@@ -10,6 +10,7 @@ import TimeTrackerStatisticsPlugin from "./main";
 import { Category, TimeTrackerStatisticsSettings } from "./settings";
 import {
     CategoryBalance,
+    TrackedPiece,
     computeCategoryBalances
 } from "./target-rules";
 import {
@@ -20,6 +21,7 @@ import {
     getMonthDetails,
     getMonthRange,
     getDayOffType,
+    getCountedTarget,
     getDayWorkAndOther,
     isTargetDay,
     resolveCarryOver
@@ -227,14 +229,14 @@ export function getCategories(
 export function getCategoryBalances(
     categories: Category[],
     targetDays: number,
-    tracked: Map<string, number>
+    pieces: TrackedPiece[]
 ): Map<string, CategoryBalance> {
     const rules = categories.filter(isWorkCategory).map(category => ({
         name: category.name,
         target: getCategoryTarget(category) * targetDays,
         fills: category.fills ?? []
     }));
-    return computeCategoryBalances(rules, tracked);
+    return computeCategoryBalances(rules, pieces);
 }
 
 export function extractYear(inputString: string): number | null {
@@ -306,6 +308,18 @@ export interface TrackedEntry {
     duration: number;
     startTime: string;
     endTime: string | null;
+}
+
+/** The entries between two days, in the order they were tracked. */
+function getTrackedPieces(
+    entries: TrackedEntry[],
+    startKey: string,
+    endKey: string
+): TrackedPiece[] {
+    return entries
+        .filter(e => e.dateKey >= startKey && e.dateKey <= endKey)
+        .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
+        .map(e => ({ category: e.category, duration: e.duration }));
 }
 
 export function getPageCategory(tags: string[], categories: Category[]): string {
@@ -769,7 +783,11 @@ async function renderDayReport(
         const balances = getCategoryBalances(
             categories,
             targetDays,
-            balanceTotals
+            getTrackedPieces(
+                collectTrackedEntries(pages, categories, api),
+                toDateKey(balanceRange.start),
+                date
+            )
         );
 
         let work = 0;
@@ -930,13 +948,20 @@ async function renderWeekReport(
     const months = new MonthConfigCache(plugin.app);
     await months.load(days);
     const dataMap = getWorkingTimeMap(pages, plugin, api, startKey, endKey);
-    const dailyTarget = getDailyTarget(getCategories(plugin.settings));
+    const categories = getCategories(plugin.settings);
+    const dailyTarget = getDailyTarget(categories);
 
     let target = 0;
     const rows = days.map(day => {
         const dateKey = toDateKey(day);
-        if (months.isTargetDay(day) && dateKey <= todayKey) {
-            target += dailyTarget;
+        if (months.isTargetDay(day)) {
+            target += getCountedTarget(
+                dateKey,
+                todayKey,
+                dailyTarget,
+                getDayWorkAndOther(dataMap.get(dateKey), categories)
+                    .workDuration
+            );
         }
         const label = getDayLabel(
             safeMoment(dateKey).format("D MMM (dd)"),
@@ -1050,11 +1075,6 @@ async function renderMonthReport(
         }
 
         const dateKey = currentMoment.format("YYYY-MM-DD");
-        if (isTargetDay(year, monthIndex, day, config) &&
-            dateKey <= todayKey) {
-            weeklyTarget += dailyTarget;
-        }
-
         const row = buildDayRow(
             plugin,
             api,
@@ -1066,6 +1086,11 @@ async function renderMonthReport(
         );
         weekRows.push(row);
         accumulatedDeviation += row.work;
+        if (isTargetDay(year, monthIndex, day, config)) {
+            weeklyTarget += getCountedTarget(
+                dateKey, todayKey, dailyTarget, row.work
+            );
+        }
 
         const isLastDayOfMonth = day === monthDetails.days;
         if (currentMoment.day() === endOfWeekIndex || isLastDayOfMonth) {
@@ -1205,8 +1230,10 @@ async function renderYearReport(
             );
             work += durations.workDuration;
             other += durations.otherDuration;
-            if (months.isTargetDay(day) && dateKey <= todayKey) {
-                target += dailyTarget;
+            if (months.isTargetDay(day)) {
+                target += getCountedTarget(
+                    dateKey, todayKey, dailyTarget, durations.workDuration
+                );
             }
         }
 
