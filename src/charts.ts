@@ -145,6 +145,7 @@ export interface BarDatum {
     title: string;
     values: number[];
     target?: number;
+    weekend?: boolean;
     onClick?: () => void;
 }
 
@@ -239,6 +240,11 @@ function drawStackedBarChart(
         const barX = x + (band - barWidth) / 2;
         const group = svgEl(svg, "g", {}, "stt-bar-group");
 
+        if (bar.weekend) {
+            svgEl(group, "rect", {
+                x, y: margin.top, width: band, height: plotHeight
+            }, "stt-bar-weekend");
+        }
         svgEl(group, "rect", {
             x, y: margin.top, width: band, height: plotHeight
         }, "stt-bar-hover");
@@ -273,7 +279,7 @@ function drawStackedBarChart(
                 x: x + band / 2,
                 y: height - margin.bottom + 15,
                 "text-anchor": "middle"
-            }, "stt-axis-text");
+            }, "stt-axis-text" + (bar.weekend ? " is-weekend" : ""));
             label.textContent = bar.label;
         }
 
@@ -404,6 +410,7 @@ export interface HeatCell {
     text?: string;
     detail?: string;
     marked?: boolean;
+    weekend?: boolean;
     onClick?: () => void;
 }
 
@@ -465,13 +472,15 @@ export function renderHeatmap(
         svgEl(group, "rect", {
             x, y, width: cellSize, height: cellSize, rx: 2
         }, `stt-heat-cell stt-heat-${level}` +
-            (cell.marked ? " is-marked" : ""));
+            (cell.marked ? " is-marked" : "") +
+            (cell.weekend ? " is-weekend" : ""));
         if (cell.text) {
             const text = svgEl(group, "text", {
                 x: x + cellSize / 2,
                 y: y + cellSize / 2 + 4,
                 "text-anchor": "middle"
-            }, `stt-heat-text${level >= 4 ? " is-strong" : ""}`);
+            }, "stt-heat-text" + (level >= 4 ? " is-strong"
+                : level === 0 && cell.weekend ? " is-weekend" : ""));
             text.textContent = cell.text;
         }
         bindTooltip(

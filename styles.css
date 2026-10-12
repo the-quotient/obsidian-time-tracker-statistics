@@ -259,6 +259,14 @@
     fill: transparent;
 }
 
+.stt-bar-weekend {
+    fill: var(--background-modifier-hover);
+}
+
+.stt-axis-text.is-weekend {
+    fill: var(--text-faint);
+}
+
 .stt-bar-group:hover .stt-bar-hover {
     fill: var(--background-modifier-hover);
 }
@@ -371,6 +379,14 @@
 .stt-heat-cell {
     stroke: transparent;
     stroke-width: 1.5;
+}
+
+.stt-heat-cell.stt-heat-0.is-weekend {
+    fill-opacity: 0.3;
+}
+
+.stt-heat-text.is-weekend {
+    fill: var(--text-faint);
 }
 
 .stt-heat-group:hover .stt-heat-cell {
@@ -515,4 +531,135 @@
 .stt-table-label,
 .stt-table-strong td {
     font-weight: 600;
+}
+
+.stt-day-off.is-count {
+    padding: 2px 10px;
+}
+
+.modal.stt-planner-modal {
+    width: min(1100px, 95vw);
+    max-width: 95vw;
+}
+
+.stt-planner {
+    --stt-plan-daysOff: rgba(var(--color-purple-rgb), 0.45);
+    --stt-plan-vacationDays: rgba(var(--color-green-rgb), 0.45);
+    --stt-plan-sickDays: rgba(var(--color-orange-rgb), 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.stt-plan-daysOff,
+.stt-planner-day.stt-plan-daysOff { background: var(--stt-plan-daysOff); }
+.stt-plan-vacationDays,
+.stt-planner-day.stt-plan-vacationDays { background: var(--stt-plan-vacationDays); }
+.stt-plan-sickDays,
+.stt-planner-day.stt-plan-sickDays { background: var(--stt-plan-sickDays); }
+
+.stt-plan-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    border-radius: 2px;
+}
+
+.stt-planner-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    font-size: var(--font-ui-small);
+}
+
+.stt-planner-count {
+    display: inline-flex;
+    align-items: center;
+}
+
+.stt-planner-pending {
+    margin-left: auto;
+    color: var(--text-muted);
+}
+
+.stt-planner-months {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+    user-select: none;
+}
+
+.stt-planner-month-name {
+    font-weight: var(--font-semibold);
+    margin-bottom: 4px;
+}
+
+.stt-planner-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.stt-planner-weekday {
+    text-align: center;
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+
+.stt-planner-day {
+    text-align: center;
+    padding: 2px 0;
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.stt-planner-day:not(.is-weekend):hover {
+    outline: 1px solid var(--interactive-accent);
+}
+
+.stt-planner-day.is-weekend {
+    color: var(--text-faint);
+    background: var(--background-modifier-hover);
+    cursor: default;
+}
+
+.stt-planner-day.is-holiday {
+    box-shadow: inset 0 0 0 1px rgba(var(--color-purple-rgb), 0.9);
+}
+
+.stt-planner-day.is-today.is-holiday {
+    box-shadow: inset 0 0 0 1px var(--text-muted),
+        inset 0 0 0 2px rgba(var(--color-purple-rgb), 0.9);
+}
+
+.stt-planner-day.is-today {
+    font-weight: var(--font-bold);
+    box-shadow: inset 0 0 0 1px var(--text-muted);
+}
+
+.stt-planner-day.is-pending {
+    text-decoration: underline;
+}
+
+.stt-planner-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.stt-planner-footer .stt-card-hint {
+    margin-top: 0;
+}
+
+.stt-planner-buttons {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
 }

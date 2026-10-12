@@ -99,11 +99,11 @@ A popup window with interactive charts for the whole vault. It works independent
 **Each view includes:**
 
 - **Summary tiles**: Total tracked time, work time, target, deviation of the period, accumulated deviation including the carry-over from the monthly notes, active days and daily average. For the current period, target and deviation are counted up to today.
-- **Heatmap**: A calendar of daily totals (Year, Month), or the time tracked per hour (Week: per day, Day: per category). Days off are outlined.
-- **Bar chart**: Time per month, day or hour, stacked by category, with the daily target marked.
+- **Heatmap**: A calendar of daily totals (Year, Month), or the time tracked per hour (Week: per day, Day: per category). Days off are outlined and empty weekend days are greyed out.
+- **Bar chart**: Time per month, day or hour, stacked by category, with the daily target marked. Weekends have a grey background.
 - **Distribution**: A donut chart of the tracked time by category or by note.
 - **Table**: Time per note, or every entry of the day in the Day view.
-- **Days off**: Mark a day as workday, day off, vacation or sick in the Day view, or add and remove days off in the Month view (see [Managing Time Off](#managing-time-off)).
+- **Days off**: Mark a day as workday, day off, vacation or sick in the Day view, add and remove days off in the Month view, or see the number of days off of the year, and the vacation days left, in the Year view. *Plan year* in the Month and Year views opens the year planner (see [Managing Time Off](#managing-time-off)).
 
 Click a day in a heatmap or bar chart to open it in the Day view, or a month bar in the Year view to open that month. Hourly charts split entries by clock time, so an entry that runs past midnight appears on both days.
 
@@ -142,6 +142,7 @@ The daily work target only applies from Monday to Friday. Saturdays and Sundays 
 Days off are stored in the code block of the **monthly note** (`YYYY-MM.md`) and apply to all views: the daily, weekly, monthly and yearly code blocks as well as the dashboard. There are two ways to set them:
 
 - **In the dashboard**: Use the *Day type* card in the Day view or the *Days off* card in the Month view. The change is written to the monthly note right away. If the month has no note yet, one is created in the **Monthly notes folder** set in the settings, with `deviation = auto`.
+- **In the year planner**: Run `Plan days off for the year` or click *Plan year* in the Month or Year view of the dashboard. It shows the twelve months of a year. Choose *Day off*, *Vacation*, *Sick* or *Workday* and click or drag over the days to mark them; marking a day again with the same type makes it a workday. Weekends are shaded and skipped. With a region set under **Public holidays** in the settings, the holidays of that region are outlined and *Fill public holidays* marks those on weekdays as days off; days already marked as vacation or sick keep their type. With **Vacation days per year** set, the planner and the Year view show how many vacation days are left; with **Carry over vacation days** on, the days left at the end of a year are added to the next year. The changes are written to the monthly notes when you click *Save*, with a new note for a month that has none; *Cancel* or closing the planner discards them.
 - **In the code block**: Edit the lists of the monthly statistics block directly.
 
 A day can only have one type. Setting a new type replaces the old one.
@@ -200,6 +201,9 @@ By default, the remaining time, overtime and deviation in the daily statistics o
 |---|---|---|
 |**First day of week**|Monday|Start of the week in the weekly reports and the dashboard. Also decides how weeks are numbered (ISO or US).|
 |**Monthly notes folder**|Vault root|Where the dashboard creates new monthly notes. Existing monthly notes are found anywhere in the vault.|
+|**Public holidays**|None|Region whose public holidays the year planner outlines and can mark as days off: Germany nationwide or one of its states. Computed in the plugin, without a network request. Holidays of only parts of a state (Corpus Christi in parts of Saxony and Thuringia, Assumption Day in parts of Bavaria) are not included.|
+|**Vacation days per year**|Empty|Your yearly vacation allowance. The year planner and the Year view show the vacation days left.|
+|**Carry over vacation days**|Off|Adds the vacation days left at the end of a year to the next year's allowance, e.g. *6 of 35 (30 + 5 carried over) · 29 left*. Days taken beyond the allowance reduce the next year's. Turning it on shows **First year counted** (the carry-over starts there, default the current year) and **Days carried into the first year**.|
 |**Show charts in notes**|Off|Adds the dashboard charts below the tables of the code blocks.|
 |**Target rules**|Off|Shows the [target rules](#target-rules) and applies them.|
 |**Daily target period**|Day|Whether the [daily statistics](#daily-target-period) compare a day with its own target or the week so far with its target.|

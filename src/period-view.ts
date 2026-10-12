@@ -160,6 +160,11 @@ export function hourKey(dateKey: string, hour: number, category: string): string
     return `${dateKey}|${hour}|${category}`;
 }
 
+export function isWeekend(day: Date): boolean {
+    const weekday = day.getDay();
+    return weekday === 0 || weekday === 6;
+}
+
 export function getDayOffLabel(type: DayOffType): string {
     return DAY_OFF_TYPES.find(t => t.type === type)?.label ?? type;
 }
@@ -458,6 +463,7 @@ export function renderHeatmapCard(
                 text: isYear ? undefined : String(day.getDate()),
                 detail: dayType ? getDayOffLabel(dayType) : undefined,
                 marked: dayType !== null,
+                weekend: isWeekend(day),
                 onClick: () => options.onSelect("day", day)
             };
         });
@@ -512,6 +518,7 @@ export function renderHeatmapCard(
                     value,
                     title: `${toMoment(day).format("ddd, D MMM")} · ` +
                         `${pad(hour)}:00–${pad((hour + 1) % 24)}:00`,
+                    weekend: isWeekend(day),
                     onClick: () => options.onSelect("day", day)
                 });
             }
@@ -615,6 +622,7 @@ function renderBarsCard(
                 title: m.format("ddd, D MMM YYYY"),
                 values: series.map(s => byCategory?.get(s.key) ?? 0),
                 target: dayTargets.get(dateKey),
+                weekend: isWeekend(day),
                 onClick: () => options.onSelect("day", day)
             };
         });

@@ -17,6 +17,7 @@ import {
     displayStatisticsYear
 } from "./statistics";
 import { PERIODS, PeriodType, StatisticsDashboardModal } from "./dashboard";
+import { DaysOffPlannerModal } from "./year-planner";
 
 const README_URL =
     "https://github.com/the-quotient/obsidian-time-tracker-statistics#readme";
@@ -132,6 +133,16 @@ export default class TimeTrackerStatisticsPlugin extends Plugin {
                 callback: () => this.openDashboard(type)
             });
         }
+
+        this.addCommand({
+            id: "plan-days-off",
+            name: "Plan days off for the year",
+            callback: () => {
+                new DaysOffPlannerModal(
+                    this.app, this, new Date().getFullYear()
+                ).open();
+            }
+        });
 
         this.addRibbonIcon(
             "bar-chart-3",

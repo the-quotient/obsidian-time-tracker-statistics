@@ -17,6 +17,16 @@ export interface TimeTrackerStatisticsSettings {
     showChartsInNotes: boolean;
     targetRules: boolean;
     targetPeriod: TargetPeriod;
+    /** Region of `HOLIDAY_REGIONS` whose public holidays the planner fills. */
+    holidayRegion: string;
+    /** Vacation days per year; 0 shows no allowance. */
+    vacationDaysPerYear: number;
+    /** Whether vacation days left at the end of a year carry over. */
+    vacationCarryOver: boolean;
+    /** First year whose vacation days are counted for the carry-over. */
+    vacationFirstYear: number;
+    /** Vacation days carried into the first counted year. */
+    vacationCarriedIntoFirstYear: number;
     lastSeenVersion?: string;
 }
 
@@ -26,6 +36,11 @@ export const defaultSettings: TimeTrackerStatisticsSettings = {
     showChartsInNotes: false,
     targetRules: false,
     targetPeriod: "day",
+    holidayRegion: "",
+    vacationDaysPerYear: 0,
+    vacationCarryOver: false,
+    vacationFirstYear: 0,
+    vacationCarriedIntoFirstYear: 0,
     categories: [
         {
             name: "Work",

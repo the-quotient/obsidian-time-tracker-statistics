@@ -10,6 +10,7 @@ import {
 import TimeTrackerStatisticsPlugin from "./main";
 import { Category } from "./settings";
 import { getCategoryTarget } from "./statistics";
+import { HOLIDAY_REGIONS } from "./holidays";
 
 interface SafeSetting {
     setName(name: string): SafeSetting;
@@ -176,6 +177,60 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
             });
 
         new SafeSettingClass(container)
+            .setName('Public holidays')
+            .setDesc('Region whose public holidays the year planner can ' +
+                'mark as days off.')
+            .addDropdown((dropdown: DropdownComponent) => {
+                for (const { id, label } of HOLIDAY_REGIONS) {
+                    dropdown.addOption(id, label);
+                }
+                dropdown.setValue(this.plugin.settings.holidayRegion)
+                    .onChange(async (value: string) => {
+                        this.plugin.settings.holidayRegion = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new SafeSettingClass(container)
+            .setName('Vacation days per year')
+            .setDesc('Your yearly vacation allowance. The year planner and ' +
+                'the year view show how many days are left. Leave empty to ' +
+                'hide it.')
+            .addText((text: TextComponent) => {
+                const days = this.plugin.settings.vacationDaysPerYear;
+                text.setPlaceholder("30")
+                    .setValue(days > 0 ? String(days) : "")
+                    .onChange(async (value: string) => {
+                        const parsed = Number(value.trim().replace(",", "."));
+                        this.plugin.settings.vacationDaysPerYear =
+                            Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new SafeSettingClass(container)
+            .setName('Carry over vacation days')
+            .setDesc('Adds the vacation days left at the end of a year to ' +
+                'the allowance of the next year. Days used beyond the ' +
+                'allowance reduce it.')
+            .addToggle((toggle: ToggleComponent) => {
+                toggle.setValue(this.plugin.settings.vacationCarryOver)
+                    .onChange(async (value: boolean) => {
+                        const settings = this.plugin.settings;
+                        settings.vacationCarryOver = value;
+                        if (value && settings.vacationFirstYear <= 0) {
+                            settings.vacationFirstYear = new Date().getFullYear();
+                        }
+                        await this.plugin.saveSettings();
+                        this.display();
+                    });
+            });
+
+        if (this.plugin.settings.vacationCarryOver) {
+            this.displayVacationCarryOver(container);
+        }
+
+        new SafeSettingClass(container)
             .setName('Show charts in notes')
             .setDesc('Adds the dashboard charts below the tables of the ' +
                 'statistics code blocks. Refresh a block to apply.')
@@ -183,6 +238,40 @@ export class TimeTrackerStatisticsSettingsTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.showChartsInNotes)
                     .onChange(async (value: boolean) => {
                         this.plugin.settings.showChartsInNotes = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+    }
+
+    private displayVacationCarryOver(container: HTMLElement): void {
+        const settings = this.plugin.settings;
+        new SafeSettingClass(container)
+            .setName('First year counted')
+            .setDesc('The carry-over starts in this year. Earlier years are ' +
+                'not counted.')
+            .addText((text: TextComponent) => {
+                text.setPlaceholder(String(new Date().getFullYear()))
+                    .setValue(String(settings.vacationFirstYear))
+                    .onChange(async (value: string) => {
+                        const year = Number(value.trim());
+                        if (!Number.isInteger(year) || year < 1900) return;
+                        settings.vacationFirstYear = year;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new SafeSettingClass(container)
+            .setName('Days carried into the first year')
+            .setDesc('Vacation days left from before the first year ' +
+                'counted. Negative if more days were taken.')
+            .addText((text: TextComponent) => {
+                text.setPlaceholder("0")
+                    .setValue(settings.vacationCarriedIntoFirstYear
+                        ? String(settings.vacationCarriedIntoFirstYear) : "")
+                    .onChange(async (value: string) => {
+                        const days = Number(value.trim().replace(",", "."));
+                        settings.vacationCarriedIntoFirstYear =
+                            Number.isFinite(days) ? days : 0;
                         await this.plugin.saveSettings();
                     });
             });

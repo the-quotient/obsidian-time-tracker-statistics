@@ -40,11 +40,19 @@ import {
     getWeekNumber,
     getWeekToDateRange,
     isSameMonth,
+    isWeekend,
     renderChartGrid,
     renderHeatmapCard,
     startOfDay,
     toMoment
 } from "./period-view";
+import { DaysOffPlannerModal } from "./year-planner";
+import {
+    VacationBalance,
+    countVacationDays,
+    formatVacationBalance,
+    getCarriedVacation
+} from "./vacation";
 
 export { PERIODS };
 export type { PeriodType };
@@ -357,6 +365,9 @@ export class StatisticsDashboardModal extends Modal {
         const accumulated = getDailyTarget(categories) > 0
             ? await this.getAccumulatedDeviation(range, stats)
             : null;
+        const vacation = this.period === "year"
+            ? await this.getVacationBalance(range.start.getFullYear())
+            : null;
         const balance = await this.getTargetBalance(range, stats);
         if (token !== this.renderToken) return;
         const series = getSeries(categories, stats);
@@ -386,6 +397,7 @@ export class StatisticsDashboardModal extends Modal {
 
         renderHeatmapCard(this.bodyEl, chartOptions);
         if (this.period === "month") this.renderDaysOffCard(range);
+        if (vacation) this.renderYearDaysOffCard(range, vacation);
         renderChartGrid(this.bodyEl, chartOptions);
 
         if (this.period === "day") {
@@ -568,6 +580,7 @@ export class StatisticsDashboardModal extends Modal {
 
     private renderDaysOffCard(range: PeriodRange): void {
         const card = this.createCard("Days off");
+        this.addPlanButton(card, range.start.getFullYear());
         const marked = range.days
             .map(day => ({ day, type: this.months.getDayType(day) }))
             .filter((d): d is { day: Date; type: DayOffType } =>
@@ -623,6 +636,62 @@ export class StatisticsDashboardModal extends Modal {
         });
 
         this.renderNoteLink(card, range.start);
+    }
+
+    private openPlanner(year: number): void {
+        new DaysOffPlannerModal(this.app, this.plugin, year, () => {
+            this.months.clear();
+            this.carryOvers.clear();
+            void this.render();
+        }).open();
+    }
+
+    private addPlanButton(card: HTMLElement, year: number): void {
+        const header = card.querySelector(".stt-card-header");
+        if (!header) return;
+        const plan = header.createEl("button", { text: "Plan year" });
+        plan.addEventListener("click", () => this.openPlanner(year));
+    }
+
+    private async countVacation(year: number): Promise<number> {
+        await this.months.load(Array.from(
+            { length: 12 },
+            (_, month) => new Date(year, month, 1)
+        ));
+        return countVacationDays(year, day => this.months.getDayType(day));
+    }
+
+    private async getVacationBalance(year: number): Promise<VacationBalance> {
+        const settings = this.plugin.settings;
+        return {
+            used: await this.countVacation(year),
+            allowance: settings.vacationDaysPerYear,
+            carried: await getCarriedVacation(
+                settings,
+                year,
+                y => this.countVacation(y)
+            )
+        };
+    }
+
+    private renderYearDaysOffCard(
+        range: PeriodRange,
+        vacation: VacationBalance
+    ): void {
+        const card = this.createCard("Days off");
+        this.addPlanButton(card, range.start.getFullYear());
+        const list = card.createDiv({ cls: "stt-days-off" });
+        for (const { type, label } of DAY_OFF_TYPES) {
+            const count = range.days.filter(day =>
+                this.months.getDayType(day) === type &&
+                !isWeekend(day)).length;
+            list.createDiv({
+                cls: "stt-day-off is-count",
+                text: `${label}: ` + (type === "vacationDays"
+                    ? formatVacationBalance(vacation)
+                    : String(count))
+            });
+        }
     }
 
     private renderNotesTable(stats: PeriodStats, series: ChartSeries[]): void {

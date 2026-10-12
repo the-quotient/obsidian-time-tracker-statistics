@@ -333,24 +333,39 @@ async function ensureFolder(app: App, folder: string): Promise<void> {
     await app.vault.createFolder(folder);
 }
 
-export async function setDayOffType(
+/** Day types to set in one month, by day; `null` makes a day a workday. */
+export type DayTypeChanges = Map<number, DayOffType | null>;
+
+export function applyDayTypes(
+    base: MonthConfig,
+    changes: DayTypeChanges
+): MonthConfig {
+    const config: MonthConfig = { ...base };
+    for (const { type } of DAY_OFF_TYPES) {
+        const days = base[type].filter(d => !changes.has(d));
+        changes.forEach((dayType, day) => {
+            if (dayType === type) days.push(day);
+        });
+        config[type] = days.sort((a, b) => a - b);
+    }
+    return config;
+}
+
+/**
+ * Writes the day types of one month to its monthly note, creating the note
+ * in the monthly notes folder if the month has none.
+ */
+export async function setDayTypes(
     plugin: TimeTrackerStatisticsPlugin,
     year: number,
     monthIndex: number,
-    day: number,
-    dayType: DayOffType | null
+    changes: DayTypeChanges
 ): Promise<MonthNote> {
     const app = plugin.app;
     const note = await findMonthNote(app, year, monthIndex);
     const base: MonthConfig = note?.config ??
         { deviation: "auto", daysOff: [], vacationDays: [], sickDays: [] };
-
-    const config: MonthConfig = { ...base };
-    for (const { type } of DAY_OFF_TYPES) {
-        const days = base[type].filter(d => d !== day);
-        if (type === dayType) days.push(day);
-        config[type] = days.sort((a, b) => a - b);
-    }
+    const config = applyDayTypes(base, changes);
 
     const folder = normalizePath(plugin.settings.monthlyNotesFolder || "/");
     const name = `${year}-${pad(monthIndex)}.md`;
@@ -370,6 +385,16 @@ export async function setDayOffType(
         file = await app.vault.create(path, createMonthBlock(config));
     }
     return { file, config };
+}
+
+export function setDayOffType(
+    plugin: TimeTrackerStatisticsPlugin,
+    year: number,
+    monthIndex: number,
+    day: number,
+    dayType: DayOffType | null
+): Promise<MonthNote> {
+    return setDayTypes(plugin, year, monthIndex, new Map([[day, dayType]]));
 }
 
 export async function resolveCarryOver(
