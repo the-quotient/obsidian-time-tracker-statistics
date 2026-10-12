@@ -703,3 +703,47 @@ export function renderChartGrid(
     renderBarsCard(grid, options);
     renderDistributionCard(grid, options);
 }
+
+/** Start and end of an entry as `HH:mm – HH:mm`, or `– now` while running. */
+export function formatEntryTime(entry: TrackedEntry): string {
+    const clock = (date: Date) =>
+        `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    const start = new Date(entry.startTime);
+    const end = entry.endTime ? new Date(entry.endTime) : null;
+    return `${clock(start)} – ${end ? clock(end) : "now"}`;
+}
+
+/**
+ * Deviation at the end of the period including the carry-over: the
+ * carry-over into the first month, the deviation of that month before
+ * the period, and the deviation of the period itself. `months` must hold
+ * the first month of the period.
+ */
+export function getAccumulatedDeviation(
+    entries: TrackedEntry[],
+    categories: Category[],
+    months: MonthConfigCache,
+    range: PeriodRange,
+    stats: PeriodStats,
+    carryOver: number,
+    firstDayOfWeek: number
+): number {
+    const monthStart = new Date(
+        range.start.getFullYear(),
+        range.start.getMonth(),
+        1
+    );
+    let deviation = carryOver + stats.work - stats.target;
+    if (monthStart < range.start) {
+        const days = getPeriodRange("month", monthStart, firstDayOfWeek)
+            .days.filter(day => day < range.start);
+        const before = computePeriodStats(
+            entries,
+            categories,
+            { start: monthStart, end: addDays(range.start, -1), days },
+            months.getDayTargets(days, categories)
+        );
+        deviation += before.work - before.target;
+    }
+    return deviation;
+}

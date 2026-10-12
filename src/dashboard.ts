@@ -9,13 +9,15 @@ import {
     getSTTApi,
     loadPageTrackers,
     collectTrackedEntries,
+    computeCategoryTotals,
     getCategories,
-    getDailyTarget
+    getCategoryTotalsTable,
+    getDailyTarget,
+    getMonthCarryOver
 } from "./statistics";
 import {
     DAY_OFF_TYPES,
     DayOffType,
-    resolveCarryOver,
     setDayOffType
 } from "./carry-over";
 import { ChartSeries, ChartTooltip, renderEmpty } from "./charts";
@@ -30,13 +32,14 @@ import {
     addDays,
     computePeriodStats,
     createCard,
+    formatEntryTime,
+    getAccumulatedDeviation,
     getDayOffLabel,
     getPeriodRange,
     getSeries,
     getWeekNumber,
     getWeekToDateRange,
     isSameMonth,
-    pad,
     renderChartGrid,
     renderHeatmapCard,
     startOfDay,
@@ -386,6 +389,8 @@ export class StatisticsDashboardModal extends Modal {
         renderChartGrid(this.bodyEl, chartOptions);
 
         if (this.period === "day") {
+            await this.renderTotalsTable(range.start, token);
+            if (token !== this.renderToken) return;
             this.renderEntriesTable(stats);
         } else {
             this.renderNotesTable(stats, series);
@@ -408,51 +413,35 @@ export class StatisticsDashboardModal extends Modal {
     }
 
     private async resolveCarryOver(day: Date): Promise<number> {
-        const { config, path } = this.months.get(day);
-        if (path && config.deviation !== "auto") return config.deviation;
         if (!this.api) return 0;
-        const result = await resolveCarryOver(
+        return getMonthCarryOver(
             this.plugin,
             this.api,
             this.pages,
-            day.getFullYear(),
-            day.getMonth() + 1
+            this.months,
+            day
         );
-        return result.deviation;
     }
 
-    /**
-     * Deviation at the end of the period including the carry-over: the
-     * carry-over into the first month, the deviation of that month before
-     * the period, and the deviation of the period itself.
-     */
+    /** Deviation at the end of the period including the carry-over. */
     private async getAccumulatedDeviation(
         range: PeriodRange,
         stats: PeriodStats
     ): Promise<number> {
-        const monthStart = new Date(
+        const carryOver = await this.getCarryOver(new Date(
             range.start.getFullYear(),
             range.start.getMonth(),
             1
+        ));
+        return getAccumulatedDeviation(
+            this.entries,
+            getCategories(this.plugin.settings),
+            this.months,
+            range,
+            stats,
+            carryOver,
+            this.plugin.settings.firstDayOfWeek
         );
-        let deviation = await this.getCarryOver(monthStart) +
-            stats.work - stats.target;
-        if (monthStart < range.start) {
-            const categories = getCategories(this.plugin.settings);
-            const days = getPeriodRange(
-                "month",
-                monthStart,
-                this.plugin.settings.firstDayOfWeek
-            ).days.filter(day => day < range.start);
-            const before = computePeriodStats(
-                this.entries,
-                categories,
-                { start: monthStart, end: addDays(range.start, -1), days },
-                this.months.getDayTargets(days, categories)
-            );
-            deviation += before.work - before.target;
-        }
-        return deviation;
     }
 
     /**
@@ -685,6 +674,44 @@ export class StatisticsDashboardModal extends Modal {
         }
     }
 
+    /** Totals per category with targets and fills, as in the day note. */
+    private async renderTotalsTable(day: Date, token: number): Promise<void> {
+        const settings = this.plugin.settings;
+        await this.months.load(
+            getWeekToDateRange(day, settings.firstDayOfWeek).days
+        );
+        if (token !== this.renderToken) return;
+        const totals = computeCategoryTotals(
+            this.entries,
+            getCategories(settings),
+            this.months,
+            day,
+            settings
+        );
+        const card = this.createCard("Totals");
+        if (totals.tracked <= 0) {
+            renderEmpty(card, "No tracked time on this day.");
+            return;
+        }
+        const { header, rows } = getCategoryTotalsTable(
+            totals,
+            (ms: number) => this.format(ms)
+        );
+        const table = card.createEl("table", { cls: "stt-table" });
+        const head = table.createEl("thead").createEl("tr");
+        for (const title of header) head.createEl("th", { text: title });
+        const body = table.createEl("tbody");
+        for (const { cells, strong } of rows) {
+            const row = body.createEl("tr", {
+                cls: strong ? "stt-table-strong" : ""
+            });
+            cells.forEach((cell, i) => {
+                const td = row.createEl("td", { text: cell });
+                if (i === 0) td.addClass("stt-table-label");
+            });
+        }
+    }
+
     private renderEntriesTable(stats: PeriodStats): void {
         const card = this.createCard("Entries");
         if (stats.entries.length === 0) {
@@ -702,12 +729,7 @@ export class StatisticsDashboardModal extends Modal {
         const body = table.createEl("tbody");
         for (const entry of entries) {
             const row = body.createEl("tr");
-            const start = new Date(entry.startTime);
-            const end = entry.endTime ? new Date(entry.endTime) : null;
-            const time = `${pad(start.getHours())}:${pad(start.getMinutes())}` +
-                ` – ${end ? `${pad(end.getHours())}:${pad(end.getMinutes())}`
-                    : "now"}`;
-            row.createEl("td", { text: time });
+            row.createEl("td", { text: formatEntryTime(entry) });
             const link = row.createEl("td").createEl("a", {
                 text: entry.pageName,
                 cls: "internal-link"

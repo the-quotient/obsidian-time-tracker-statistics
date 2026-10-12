@@ -33,6 +33,8 @@ import {
     PeriodChartsOptions,
     PeriodType,
     computePeriodStats,
+    formatEntryTime,
+    getAccumulatedDeviation,
     getDayOffLabel,
     getPeriodRange,
     getSeries,
@@ -715,149 +717,72 @@ async function renderDayReport(
     }
     const [year, month, dayOfMonth] = date.split("-").map(Number);
     const day = new Date(year ?? 0, (month ?? 1) - 1, dayOfMonth ?? 1);
-    const categories = getCategories(plugin.settings);
-    const showTargetColumns = categories.some(isWorkCategory);
-    const weekly = showTargetColumns &&
-        plugin.settings.targetPeriod === "week";
-    const balanceRange = weekly
-        ? getWeekToDateRange(day, plugin.settings.firstDayOfWeek)
-        : getPeriodRange("day", day, plugin.settings.firstDayOfWeek);
+    const settings = plugin.settings;
+    const categories = getCategories(settings);
 
     const pages = await loadPageTrackers(
         context.dataviewApi,
         plugin.app,
         api
     );
+    const entries = collectTrackedEntries(pages, categories, api);
     const months = new MonthConfigCache(plugin.app);
-    await months.load(balanceRange.days);
-    const isTarget = months.isTargetDay(day);
-    const dayType = months.getDayType(day);
-    const targetDays = balanceRange.days
-        .filter(d => months.isTargetDay(d)).length;
-
-    const resultMap = getWorkingTimeMap(
-        pages,
-        plugin,
-        api,
-        toDateKey(balanceRange.start),
-        date
-    );
-    const workingTime = resultMap.get(date) || createEmptyResult();
-    const dayTotals = getCategoryTotals([workingTime]);
-    const balanceTotals = weekly
-        ? getCategoryTotals(resultMap.values())
-        : dayTotals;
-    const balanceTotal = Array.from(balanceTotals.values())
-        .reduce((total, time) => total + time, 0);
+    await months.load([
+        new Date(day.getFullYear(), day.getMonth(), 1),
+        ...getWeekToDateRange(day, settings.firstDayOfWeek).days
+    ]);
+    const totals = computeCategoryTotals(entries, categories, months, day,
+        settings);
+    const dayEntries = entries
+        .filter(entry => entry.dateKey === date)
+        .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
     let dailyReportMd = "";
-    if (showTargetColumns && !isTarget) {
+    if (totals.showTargets && !months.isTargetDay(day)) {
+        const dayType = months.getDayType(day);
         const reason = dayType ? getDayOffLabel(dayType) : "Weekend";
         dailyReportMd += `_${reason}: no target for this day._\n\n`;
     }
 
-    if (workingTime.totalDuration === 0) {
+    if (dayEntries.length === 0) {
         dailyReportMd += "_No tracked time found for this day._\n\n";
     }
 
-    if (balanceTotal > 0) {
-        const categoryNames = new Set<string>();
-        if (targetDays > 0) {
-            for (const category of categories.filter(isWorkCategory)) {
-                categoryNames.add(category.name);
-            }
-        }
-        for (const name of balanceTotals.keys()) categoryNames.add(name);
-
-        let totalsTable = `| Category | Duration |`;
-        if (weekly) {
-            totalsTable += ` Week so far | Remaining | Overtime |\n`;
-            totalsTable += `|:---|:---|:---|:---|:---|\n`;
-        } else if (showTargetColumns) {
-            totalsTable += ` Remaining | Overtime |\n`;
-            totalsTable += `|:---|:---|:---|:---|\n`;
-        } else {
-            totalsTable += `\n|:---|:---|\n`;
-        }
-
-        const balances = getCategoryBalances(
-            categories,
-            targetDays,
-            getTrackedPieces(
-                collectTrackedEntries(pages, categories, api),
-                toDateKey(balanceRange.start),
-                date
-            )
-        );
-
-        let work = 0;
-        for (const categoryName of categoryNames) {
-            const balance = balances.get(categoryName);
-            const balanceDur = balanceTotals.get(categoryName) ?? 0;
-            if (balance) work += balanceDur;
-            let remainingStr = "";
-            let overtimeStr = "";
-            if (balance?.remaining) {
-                remainingStr = api.formatDuration(balance.remaining);
-            }
-            if (balance?.overtime) {
-                overtimeStr = api.formatDuration(balance.overtime);
-            }
-
-            const escName = escapeMarkdown(categoryName);
-            const fillNote = balance ? getFillNote(api, balance) : "";
-            let durFmt = api.formatDuration(dayTotals.get(categoryName) ?? 0);
-            if (weekly) {
-                durFmt += ` | ${api.formatDuration(balanceDur)}${fillNote}`;
-            } else {
-                durFmt += fillNote;
-            }
-            totalsTable += `| **${escName}** | ${durFmt} |`;
-
-            if (showTargetColumns) {
-                totalsTable += ` ${remainingStr} | ${overtimeStr} |\n`;
-            } else {
-                totalsTable += `\n`;
-            }
-        }
-
-        totalsTable += `| **Total** | `;
-        const tDur = api.formatDuration(workingTime.totalDuration);
-        totalsTable += `**${tDur}** |`;
-        if (weekly) {
-            totalsTable += ` **${api.formatDuration(balanceTotal)}** |`;
-        }
-        if (showTargetColumns) {
-            totalsTable += ` | |\n`;
-            const deviation = work - getDailyTarget(categories) * targetDays;
-            totalsTable += weekly
-                ? `| **Deviation** | | `
-                : `| **Deviation** | `;
-            totalsTable += `**${formatSigned(api, deviation)}** | | |`;
-        }
-
-        dailyReportMd += `#### Totals\n\n${totalsTable}\n\n`;
+    if (totals.tracked > 0) {
+        dailyReportMd += `#### Totals\n\n` +
+            `${buildCategoryTotalsTable(api, totals)}\n\n`;
     }
 
-    if (workingTime.totalDuration > 0) {
-        let breakdownTable = `| Category | Entry | Duration |\n`;
-        breakdownTable += `|:---|:---|:---|\n`;
+    if (getDailyTarget(categories) > 0) {
+        const range = getPeriodRange("day", day, settings.firstDayOfWeek);
+        const stats = computePeriodStats(entries, categories, range,
+            months.getDayTargets(range.days, categories));
+        const accumulated = getAccumulatedDeviation(
+            entries,
+            categories,
+            months,
+            range,
+            stats,
+            await getMonthCarryOver(plugin, api, pages, months, day),
+            settings.firstDayOfWeek
+        );
+        dailyReportMd += `**Accumulated deviation** (incl. carry-over` +
+            `${stats.targetIsPartial ? ", up to today" : ""}): ` +
+            `**${formatSigned(api, accumulated)}**\n\n`;
+    }
 
-        workingTime.fileCategories.forEach((category, i) => {
-            const pageName = workingTime.pageNames[i]?.toUpperCase()
-                || "UNKNOWN";
-            const entryName = workingTime.entryNames[i] || "Unknown";
-            const duration = workingTime.entryDurations[i] || 0;
+    if (dayEntries.length > 0) {
+        let breakdownTable = `| Time | Category | Entry | Duration |\n`;
+        breakdownTable += `|:---|:---|:---|:---|\n`;
 
-            const escPage = escapeMarkdown(pageName);
-            const escEntry = escapeMarkdown(entryName);
-            const entryKey = `**${escPage}-${escEntry}**`;
-            const durStr = api.formatDuration(duration);
-            const escCat = escapeMarkdown(category);
-
-            breakdownTable += `| ${escCat} | ${entryKey} `;
-            breakdownTable += `| ${durStr} |\n`;
-        });
+        for (const entry of dayEntries) {
+            const escPage = escapeMarkdown(entry.pageName.toUpperCase());
+            const escEntry = escapeMarkdown(entry.name || "Unknown");
+            breakdownTable += `| ${formatEntryTime(entry)} ` +
+                `| ${escapeMarkdown(entry.category)} ` +
+                `| **${escPage}-${escEntry}** ` +
+                `| ${api.formatDuration(entry.duration)} |\n`;
+        }
 
         dailyReportMd += `#### Entries breakdown\n\n${breakdownTable}`;
     }
@@ -871,29 +796,208 @@ async function renderDayReport(
     await renderCharts(container, context, pages, "day", day);
 }
 
-function getCategoryTotals(
-    results: Iterable<WorkingTimeResult>
-): Map<string, number> {
-    const totals = new Map<string, number>();
-    for (const result of results) {
-        result.entryDurations.forEach((duration, i) => {
-            const category = result.fileCategories[i] || "Unknown";
-            totals.set(category, (totals.get(category) ?? 0) + duration);
+/** Totals per category on a day, with targets and fills if set. */
+export interface CategoryTotals {
+    rows: {
+        name: string;
+        /** Tracked on the day itself. */
+        duration: number;
+        /** Tracked over the day, or the week so far with weekly targets. */
+        tracked: number;
+        balance?: CategoryBalance;
+    }[];
+    weekly: boolean;
+    showTargets: boolean;
+    duration: number;
+    tracked: number;
+    deviation: number;
+}
+
+/** `months` must hold the months of the week up to `day`. */
+export function computeCategoryTotals(
+    entries: TrackedEntry[],
+    categories: Category[],
+    months: MonthConfigCache,
+    day: Date,
+    settings: TimeTrackerStatisticsSettings
+): CategoryTotals {
+    const showTargets = categories.some(isWorkCategory);
+    const weekly = showTargets && settings.targetPeriod === "week";
+    const range = weekly
+        ? getWeekToDateRange(day, settings.firstDayOfWeek)
+        : getPeriodRange("day", day, settings.firstDayOfWeek);
+    const dateKey = toDateKey(day);
+    const startKey = toDateKey(range.start);
+
+    const durations = new Map<string, number>();
+    const tracked = new Map<string, number>();
+    for (const entry of entries) {
+        if (entry.dateKey < startKey || entry.dateKey > dateKey) continue;
+        tracked.set(entry.category,
+            (tracked.get(entry.category) ?? 0) + entry.duration);
+        if (entry.dateKey === dateKey) {
+            durations.set(entry.category,
+                (durations.get(entry.category) ?? 0) + entry.duration);
+        }
+    }
+
+    const targetDays = range.days.filter(d => months.isTargetDay(d)).length;
+    const balances = getCategoryBalances(
+        categories,
+        targetDays,
+        getTrackedPieces(entries, startKey, dateKey)
+    );
+    const names = new Set<string>();
+    if (targetDays > 0) {
+        for (const category of categories.filter(isWorkCategory)) {
+            names.add(category.name);
+        }
+    }
+    for (const name of tracked.keys()) names.add(name);
+
+    const stats = computePeriodStats(entries, categories, range,
+        months.getDayTargets(range.days, categories));
+    const sum = (map: Map<string, number>) =>
+        Array.from(map.values()).reduce((total, time) => total + time, 0);
+    return {
+        rows: Array.from(names, name => ({
+            name,
+            duration: durations.get(name) ?? 0,
+            tracked: tracked.get(name) ?? 0,
+            balance: balances.get(name)
+        })),
+        weekly,
+        showTargets,
+        duration: sum(durations),
+        tracked: sum(tracked),
+        deviation: stats.work - stats.target
+    };
+}
+
+/** A row of the totals table; `strong` for the total and deviation rows. */
+export interface TotalsTableRow {
+    cells: string[];
+    strong: boolean;
+}
+
+/**
+ * The totals table as text cells, shared by the day note and the
+ * dashboard. `escape` is applied to category names.
+ */
+export function getCategoryTotalsTable(
+    totals: CategoryTotals,
+    format: (ms: number) => string,
+    escape: (text: string) => string = text => text
+): { header: string[]; rows: TotalsTableRow[] } {
+    const { weekly, showTargets } = totals;
+    const optional = (ms: number) => ms ? format(ms) : "";
+    const signed = (ms: number) =>
+        (ms >= 0 ? "+" : "-") + format(Math.abs(ms));
+
+    const header = ["Category", "Duration"];
+    if (weekly) header.push("Week so far");
+    if (showTargets) header.push("Target", "Counted", "Remaining", "Overtime");
+
+    const rows: TotalsTableRow[] = totals.rows.map(row => {
+        const balance = row.balance;
+        const fillNote = balance ? getFillNote(balance, format, escape) : "";
+        const cells = [escape(row.name), format(row.duration)];
+        if (weekly) {
+            cells.push(format(row.tracked) + fillNote);
+        } else {
+            cells[1] += fillNote;
+        }
+        if (showTargets) {
+            cells.push(
+                optional(balance?.target ?? 0),
+                balance ? format(getCountedTime(balance)) : "",
+                optional(balance?.remaining ?? 0),
+                optional(balance?.overtime ?? 0)
+            );
+        }
+        return { cells, strong: false };
+    });
+
+    const blanks = showTargets ? ["", "", "", ""] : [];
+    const total = ["Total", format(totals.duration)];
+    if (weekly) total.push(format(totals.tracked));
+    rows.push({ cells: [...total, ...blanks], strong: true });
+    if (showTargets) {
+        const deviation = signed(totals.deviation);
+        rows.push({
+            cells: weekly
+                ? ["Deviation", "", deviation, ...blanks]
+                : ["Deviation", deviation, ...blanks],
+            strong: true
         });
     }
-    return totals;
+    return { header, rows };
+}
+
+function buildCategoryTotalsTable(
+    api: STT_API,
+    totals: CategoryTotals
+): string {
+    const { header, rows } = getCategoryTotalsTable(
+        totals,
+        (ms: number) => api.formatDuration(ms),
+        escapeMarkdown
+    );
+    let table = `| ${header.join(" | ")} |\n`;
+    table += `|${header.map(() => ":---").join("|")}|\n`;
+    for (const { cells, strong } of rows) {
+        const shown = cells.map((cell, i) =>
+            cell && (strong || i === 0) ? `**${cell}**` : cell);
+        table += `| ${shown.join(" | ")} |\n`;
+    }
+    return table;
+}
+
+/** Time of a category after fills: tracked, plus received, minus given. */
+export function getCountedTime(balance: CategoryBalance): number {
+    let time = balance.tracked;
+    for (const received of balance.received.values()) time += received;
+    for (const given of balance.given.values()) time -= given;
+    return time;
 }
 
 /** Notes which part of the time filled the target of other categories. */
-function getFillNote(api: STT_API, balance: CategoryBalance): string {
+function getFillNote(
+    balance: CategoryBalance,
+    format: (ms: number) => string,
+    escape: (text: string) => string
+): string {
     const notes: string[] = [];
     for (const [name, time] of balance.received) {
-        notes.push(`+${api.formatDuration(time)} from ${escapeMarkdown(name)}`);
+        notes.push(`+${format(time)} from ${escape(name)}`);
     }
     for (const [name, time] of balance.given) {
-        notes.push(`-${api.formatDuration(time)} to ${escapeMarkdown(name)}`);
+        notes.push(`-${format(time)} to ${escape(name)}`);
     }
     return notes.length ? ` (${notes.join(", ")})` : "";
+}
+
+/**
+ * Deviation carried into the month of `day`: set by hand in its monthly
+ * note, or resolved from the months before.
+ */
+export async function getMonthCarryOver(
+    plugin: TimeTrackerStatisticsPlugin,
+    api: STT_API,
+    pages: PageTrackers[],
+    months: MonthConfigCache,
+    day: Date
+): Promise<number> {
+    const { config, path } = months.get(day);
+    if (path && config.deviation !== "auto") return config.deviation;
+    const result = await resolveCarryOver(
+        plugin,
+        api,
+        pages,
+        day.getFullYear(),
+        day.getMonth() + 1
+    );
+    return result.deviation;
 }
 
 export function displayStatisticsWeek(

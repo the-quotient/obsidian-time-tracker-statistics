@@ -511,3 +511,8 @@
 .stt-note-charts {
     margin-top: 1em;
 }
+
+.stt-table-label,
+.stt-table-strong td {
+    font-weight: 600;
+}
